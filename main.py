@@ -1132,6 +1132,7 @@ class MainWindow(QMainWindow):
         self._fetcher    = None
         self._quote_job  = None
         self._search_job = None
+        self._add_job    = None
         self._selected   = None
         self._period_key = '1M'
         self._indicators = set()       # active overlays: BBANDS / RSI / MACD
@@ -1347,6 +1348,23 @@ class MainWindow(QMainWindow):
             return
         if sym in self._watchlist:
             QMessageBox.information(self, 'Already added', f'{sym} is already in your watchlist.')
+            return
+        if self._add_job and self._add_job.isRunning():
+            return
+        # validate the symbol has market data before adding (catches typos)
+        self._status.setText(f'Checking {sym} …')
+        self._add_job = PriceFetcher([sym])
+        self._add_job.prices_ready.connect(lambda prices, s=sym: self._on_add_validated(s, prices))
+        self._add_job.start()
+
+    def _on_add_validated(self, sym: str, prices: dict):
+        if sym not in prices:
+            self._status.setText('')
+            QMessageBox.warning(
+                self, 'Symbol not found',
+                f"Couldn't find market data for \"{sym}\".\n\n"
+                "Check the spelling, or start typing the company name and pick "
+                "a suggestion from the list.")
             return
         self._watchlist.append(sym)
         self._save_watchlist()
