@@ -107,36 +107,72 @@ def build_user_prompt(portfolio_result: dict, watchlist_quotes: dict | None,
 
 
 def stream_insights(question: str, portfolio_result: dict,
-                    watchlist_quotes: dict | None = None, *, client=None):
+                    watchlist_quotes: dict | None = None, *, client=None,
+                    attempts: int = 3):
     """
     Yield text chunks from a streaming, portfolio-aware Claude response.
 
-    `client` can be injected for testing; otherwise a default anthropic.Anthropic()
-    is created (reads ANTHROPIC_API_KEY from the environment).
+    Retries transient connection/overload/rate-limit failures with backoff (only
+    before any text has been produced, to avoid duplicating output). `client` can
+    be injected for testing.
+
+    Passing an explicit api_key (rather than letting the SDK auto-resolve auth)
+    avoids a stray/empty ANTHROPIC_AUTH_TOKEN env var producing a bad auth header
+    that surfaces as a confusing "connection error".
     """
+    import os
+    import time
     import anthropic  # imported lazily so the rest of the app runs without the package
 
-    client = client or anthropic.Anthropic()
+    if client is None:
+        key = os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            raise RuntimeError(
+                "No Claude API key found. Put ANTHROPIC_API_KEY in a .env file "
+                "next to the app, or set it as an environment variable.")
+        # a blank ANTHROPIC_AUTH_TOKEN would be picked up and produce a bad
+        # 'Bearer ' auth header, which fails as a misleading "connection error"
+        if not (os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip():
+            os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+        client = anthropic.Anthropic(api_key=key, max_retries=3, timeout=120.0)
+
     user_prompt = build_user_prompt(portfolio_result, watchlist_quotes, question)
 
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=MAX_TOKENS,
-        thinking={"type": "adaptive"},
-        # effort medium: a latency/cost balance that suits an interactive desktop app;
-        # bump to "high" for deeper analysis.
-        output_config={"effort": "medium"},
-        # server-side web tools so Claude can pull live fundamentals/news itself
-        tools=[
-            {"type": "web_search_20260209", "name": "web_search"},
-            {"type": "web_fetch_20260209", "name": "web_fetch"},
-        ],
-        system=[{
-            "type": "text",
-            "text": SYSTEM_PROMPT,
-            "cache_control": {"type": "ephemeral"},
-        }],
-        messages=[{"role": "user", "content": user_prompt}],
-    ) as stream:
-        for text in stream.text_stream:
-            yield text
+    # transient errors worth retrying (APITimeoutError subclasses APIConnectionError)
+    transient = (anthropic.APIConnectionError, anthropic.InternalServerError)
+    for extra in ("RateLimitError", "OverloadedError"):
+        cls = getattr(anthropic, extra, None)
+        if cls:
+            transient = transient + (cls,)
+
+    for attempt in range(attempts):
+        produced = False
+        try:
+            with client.messages.stream(
+                model=MODEL,
+                max_tokens=MAX_TOKENS,
+                thinking={"type": "adaptive"},
+                # effort medium: a latency/cost balance that suits an interactive desktop app;
+                # bump to "high" for deeper analysis.
+                output_config={"effort": "medium"},
+                # server-side web tools so Claude can pull live fundamentals/news itself
+                tools=[
+                    {"type": "web_search_20260209", "name": "web_search"},
+                    {"type": "web_fetch_20260209", "name": "web_fetch"},
+                ],
+                system=[{
+                    "type": "text",
+                    "text": SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }],
+                messages=[{"role": "user", "content": user_prompt}],
+            ) as stream:
+                for text in stream.text_stream:
+                    produced = True
+                    yield text
+            return
+        except transient:
+            # don't retry once we've already streamed text (would duplicate output)
+            if produced or attempt == attempts - 1:
+                raise
+            time.sleep(1.5 * (attempt + 1))

@@ -997,11 +997,28 @@ class InsightsDialog(QDialog):
 
     def _on_ai_error(self, msg: str):
         self._set_busy(False)
-        if 'api_key' in msg.lower() or 'authentication' in msg.lower():
-            msg = ('No Claude API key found. Set the ANTHROPIC_API_KEY environment '
-                   'variable and reopen the app.\n\nDetails: ' + msg)
+        low = msg.lower()
+        if 'api_key' in low or 'authentication' in low or 'no claude api key' in low:
+            friendly = ('No Claude API key found. Put a .env file with '
+                        'ANTHROPIC_API_KEY=... next to the app (or set it as an '
+                        'environment variable), then reopen.')
+        elif 'connection' in low or 'timeout' in low or 'timed out' in low:
+            friendly = ('Could not reach Claude after several retries. Check your '
+                        'internet connection and try again. Web-search queries take '
+                        'longer — if it keeps failing, try a simpler question.')
+        elif 'rate' in low or 'overload' in low or '429' in low or '529' in low:
+            friendly = ('Claude is busy or rate-limited right now. Wait a few '
+                        'seconds and try again.')
+        else:
+            friendly = 'Something went wrong talking to Claude.'
+
         self._status.setText('Error.')
-        self._answer.setPlainText(msg)
+        full = f'{friendly}\n\nDetails: {msg}'
+        # preserve any partial answer already streamed
+        if self._answer.toPlainText().strip():
+            self._answer.append('\n\n— ' + friendly)
+        else:
+            self._answer.setPlainText(full)
 
     def _set_busy(self, busy: bool):
         self._ask_btn.setEnabled(not busy)

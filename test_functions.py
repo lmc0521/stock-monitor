@@ -213,6 +213,34 @@ def test_llm_prompt():
     check('prompt embeds the question', 'What are my risks?' in prompt)
     check('prompt embeds the data block', 'Current holdings' in prompt)
 
+    # retry: a flaky client that drops the connection once, then streams text
+    import anthropic
+
+    class _Stream:
+        def __init__(self, fail): self._fail = fail
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        @property
+        def text_stream(self):
+            if self._fail:
+                raise anthropic.APIConnectionError(request=None)
+            yield 'analysis '
+            yield 'ok'
+
+    class _Msgs:
+        def __init__(self): self.calls = 0
+        def stream(self, **kw):
+            self.calls += 1
+            return _Stream(fail=(self.calls == 1))   # fail first attempt only
+
+    class _Client:
+        def __init__(self): self.messages = _Msgs()
+
+    fc = _Client()
+    out = ''.join(llm.stream_insights('q', result, watchlist, client=fc, attempts=3))
+    check('retries a dropped connection then succeeds', out == 'analysis ok',
+          detail=f'{fc.messages.calls} calls, out={out!r}')
+
     # empty question falls back to a default ask
     prompt2 = llm.build_user_prompt(result, watchlist, '')
     check('empty question gets a default', 'analysis' in prompt2.lower())
