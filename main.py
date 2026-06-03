@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QListWidget, QListWidgetItem, QLineEdit, QLabel,
     QMessageBox, QSizePolicy, QFrame, QCompleter, QDialog, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QFileDialog, QTextEdit,
-    QFormLayout, QInputDialog, QComboBox
+    QFormLayout, QInputDialog, QComboBox, QProgressBar, QScrollArea
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QStringListModel, QTimer
 from PyQt6.QtGui import QFont, QColor
@@ -26,6 +26,7 @@ from matplotlib.figure import Figure
 import llm
 import data
 import indicators as ta
+import sentiment
 
 def _app_dir() -> str:
     """Directory for read/write state — next to the .exe when frozen, else the source dir."""
@@ -283,6 +284,14 @@ class PriceFetcher(QThread):
             except Exception:
                 continue
         self.prices_ready.emit(out)
+
+
+class SentimentWorker(QThread):
+    """Fetches investor-sentiment indices off the UI thread."""
+    ready = pyqtSignal(dict)
+
+    def run(self):
+        self.ready.emit(sentiment.gather())
 
 
 class InsightsWorker(QThread):
@@ -1120,6 +1129,143 @@ class AlertsDialog(QDialog):
             self._save()
 
 
+# ── market-sentiment dialog ───────────────────────────────────────────────────
+
+class SentimentDialog(QDialog):
+    """Investor-emotion indices: CNN Fear & Greed (+components), crypto F&G, VIX."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Market Sentiment')
+        self.resize(580, 720)
+        self.setStyleSheet(parent.styleSheet() if parent else '')
+        self._job = None
+        self._build_ui()
+        self._refresh()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        head = QHBoxLayout()
+        title = QLabel('Investor Sentiment')
+        title.setFont(QFont('Segoe UI', 14, QFont.Weight.Bold))
+        ref = QPushButton('↻ Refresh')
+        ref.clicked.connect(self._refresh)
+        head.addWidget(title); head.addStretch(); head.addWidget(ref)
+        layout.addLayout(head)
+
+        # scrollable body so all components fit
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        self._body = QVBoxLayout(inner)
+        self._body.setAlignment(Qt.AlignmentFlag.AlignTop)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll)
+
+        self._status = QLabel('')
+        self._status.setStyleSheet(f'color: {SUBTEXT}; font-size: 11px;')
+        layout.addWidget(self._status)
+        disc = QLabel('Sources: CNN Business, alternative.me, Yahoo Finance. '
+                      'Scores are 0 (extreme fear) to 100 (extreme greed). For information only.')
+        disc.setWordWrap(True)
+        disc.setStyleSheet(f'color: {SUBTEXT}; font-size: 10px;')
+        layout.addWidget(disc)
+
+    # ── helpers ──
+    def _clear(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+            elif item.layout() is not None:
+                self._clear(item.layout())
+
+    def _bar(self, score: float) -> QProgressBar:
+        _, color = sentiment.classify(score)
+        bar = QProgressBar()
+        bar.setRange(0, 100)
+        bar.setValue(int(round(score)))
+        bar.setTextVisible(False)
+        bar.setFixedHeight(14)
+        bar.setStyleSheet(
+            'QProgressBar{background:#0d0d1a;border:1px solid #2a2a4a;border-radius:6px;}'
+            f'QProgressBar::chunk{{background-color:{color};border-radius:6px;}}')
+        return bar
+
+    def _add_headline(self, name: str, score: float):
+        label, color = sentiment.classify(score)
+        t = QLabel(name); t.setFont(QFont('Segoe UI', 12, QFont.Weight.Bold))
+        self._body.addWidget(t)
+        v = QLabel(f'{score:.0f}  —  {label}')
+        v.setFont(QFont('Segoe UI', 18, QFont.Weight.Bold))
+        v.setStyleSheet(f'color: {color};')
+        self._body.addWidget(v)
+        self._body.addWidget(self._bar(score))
+        self._body.addSpacing(10)
+
+    def _add_component(self, name: str, score: float):
+        _, color = sentiment.classify(score)
+        row = QHBoxLayout()
+        n = QLabel(name); n.setFixedWidth(210)
+        val = QLabel(f'{score:.0f}'); val.setFixedWidth(32)
+        val.setStyleSheet(f'color: {color};')
+        val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(n); row.addWidget(self._bar(score)); row.addWidget(val)
+        self._body.addLayout(row)
+
+    def _add_note(self, text: str):
+        n = QLabel(text); n.setStyleSheet(f'color: {SUBTEXT};')
+        self._body.addWidget(n)
+
+    def _add_vix(self, vix):
+        mood, color = sentiment.vix_mood(vix)
+        self._body.addSpacing(12)
+        t = QLabel('VIX — Volatility Index ("fear gauge")')
+        t.setFont(QFont('Segoe UI', 12, QFont.Weight.Bold))
+        self._body.addWidget(t)
+        txt = 'unavailable' if vix is None else f'{vix:.2f}  —  {mood}'
+        v = QLabel(txt); v.setFont(QFont('Segoe UI', 16, QFont.Weight.Bold))
+        v.setStyleSheet(f'color: {color};')
+        self._body.addWidget(v)
+        note = QLabel('Lower = calm markets, higher = fear / turbulence.')
+        note.setStyleSheet(f'color: {SUBTEXT}; font-size: 10px;')
+        self._body.addWidget(note)
+
+    # ── data ──
+    def _refresh(self):
+        if self._job and self._job.isRunning():
+            return
+        self._status.setText('Fetching sentiment data …')
+        self._job = SentimentWorker()
+        self._job.ready.connect(self._on_data)
+        self._job.start()
+
+    def _on_data(self, d: dict):
+        self._clear(self._body)
+        cnn, crypto, vix = d.get('cnn'), d.get('crypto'), d.get('vix')
+
+        if cnn and cnn.get('score') is not None:
+            self._add_headline('CNN Fear & Greed Index', cnn['score'])
+            for c in cnn.get('components', []):
+                self._add_component(c['label'], c['score'])
+        else:
+            self._add_note('CNN Fear & Greed unavailable right now.')
+
+        self._body.addSpacing(12)
+        if crypto and crypto.get('score') is not None:
+            self._add_headline('Crypto Fear & Greed Index', crypto['score'])
+        else:
+            self._add_note('Crypto Fear & Greed unavailable right now.')
+
+        self._add_vix(vix)
+
+        errs = d.get('errors')
+        self._status.setText('Updated.' if not errs
+                             else 'Updated — some sources failed: ' + '; '.join(errs)[:140])
+
+
 # ── main window ──────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -1244,6 +1390,11 @@ class MainWindow(QMainWindow):
         alert_btn.setObjectName('AccentBtn')
         alert_btn.clicked.connect(self._open_alerts)
         layout.addWidget(alert_btn)
+
+        mood_btn = QPushButton('😱 Market Sentiment')
+        mood_btn.setObjectName('AccentBtn')
+        mood_btn.clicked.connect(self._open_sentiment)
+        layout.addWidget(mood_btn)
 
         return panel
 
@@ -1444,6 +1595,10 @@ class MainWindow(QMainWindow):
     def _open_insights(self):
         holdings, cash = load_portfolio()
         InsightsDialog(self, holdings, cash, list(self._watchlist)).exec()
+
+    # ── market sentiment ──
+    def _open_sentiment(self):
+        SentimentDialog(self).exec()
 
     # ── chart ──
     def _on_stock_clicked(self, item):

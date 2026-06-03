@@ -323,6 +323,43 @@ def test_indicators():
     check('MACD line positive on uptrend', line.iloc[-1] > 0, detail=f'{line.iloc[-1]:.3f}')
 
 
+# ── 11. sentiment parsing + classification (offline) ─────────────────────────
+def test_sentiment():
+    print('\n[11] Sentiment parsing & classification (offline)')
+    import sentiment as sent
+
+    # classify thresholds
+    checks = [(5, 'Extreme Fear'), (35, 'Fear'), (50, 'Neutral'),
+              (65, 'Greed'), (90, 'Extreme Greed')]
+    for score, expected in checks:
+        label, color = sent.classify(score)
+        check(f'classify({score}) == {expected}', label == expected, detail=label)
+    check('classify(None) is safe', sent.classify(None)[0] == 'Unknown')
+
+    # parse a CNN-shaped payload
+    cnn_payload = {
+        'fear_and_greed': {'score': 57.0, 'rating': 'greed', 'timestamp': 't'},
+        'market_momentum_sp500': {'score': 97.6, 'rating': 'extreme greed'},
+        'put_call_options': {'score': 98.4, 'rating': 'extreme greed'},
+        'junk_bond_demand': {'score': 0.4, 'rating': 'extreme fear'},
+        'fear_and_greed_historical': {'should': 'be ignored'},
+    }
+    parsed = sent.parse_cnn(cnn_payload)
+    check('CNN score parsed', abs(parsed['score'] - 57.0) < 1e-9)
+    check('CNN components extracted', len(parsed['components']) == 3,
+          detail=str(len(parsed['components'])))
+    check('CNN component has label+score',
+          parsed['components'][0]['label'] and parsed['components'][0]['score'] is not None)
+
+    # parse crypto payload
+    crypto = sent.parse_crypto({'data': [{'value': '11', 'value_classification': 'Extreme Fear'}]})
+    check('crypto score parsed', crypto['score'] == 11.0 and crypto['rating'] == 'Extreme Fear')
+
+    # VIX mood
+    check('low VIX = Calm', sent.vix_mood(12)[0] == 'Calm')
+    check('high VIX = High Fear', sent.vix_mood(35)[0] == 'High Fear')
+
+
 def main_run():
     QApplication(sys.argv)   # needed so QObject/QThread can be constructed
     print('=' * 60)
@@ -337,6 +374,7 @@ def main_run():
     test_cache()
     test_alerts()
     test_indicators()
+    test_sentiment()
     test_quotes()
     test_search()
 
