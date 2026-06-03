@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# App state (user-specific)
+watchlist.json
+portfolio.json
+
+# Test / smoke-test artifacts
+smoke_test.png
+portfolio_smoke.png
+
+# Secrets — never commit API keys
+.env
+
+# OS
+Thumbs.db
+.DS_Store
