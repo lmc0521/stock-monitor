@@ -545,29 +545,79 @@ class ChartPanel(QWidget):
 # ── portfolio dialog ──────────────────────────────────────────────────────────
 
 class AddHoldingDialog(QDialog):
-    """Small form to add or overwrite a single holding."""
+    """Add a single holding, with company-name autocomplete and symbol validation."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle('Add holding')
         self.setStyleSheet(parent.styleSheet() if parent else '')
         self.result_holding = None
+        self._sugg_map = {}
+        self._search_job = None
+        self._validate_job = None
+        self._pending = None
 
         form = QFormLayout(self)
-        self._sym    = QLineEdit(); self._sym.setPlaceholderText('e.g. AAPL')
+        self._sym    = QLineEdit(); self._sym.setPlaceholderText('Company name or symbol…')
+        self._sym.textEdited.connect(lambda _t: self._search_timer.start())
         self._shares = QLineEdit(); self._shares.setPlaceholderText('e.g. 10')
         self._cost   = QLineEdit(); self._cost.setPlaceholderText('e.g. 180.50')
         form.addRow('Symbol', self._sym)
         form.addRow('Shares', self._shares)
         form.addRow('Avg cost', self._cost)
 
+        # autocomplete (same Yahoo search as the watchlist)
+        self._completer = QCompleter(self)
+        self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
+        self._completer_model = QStringListModel(self)
+        self._completer.setModel(self._completer_model)
+        self._completer.activated[str].connect(self._on_suggestion_picked)
+        self._sym.setCompleter(self._completer)
+
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(250)
+        self._search_timer.timeout.connect(self._run_search)
+
+        self._status = QLabel('')
+        self._status.setStyleSheet(f'color: {SUBTEXT}; font-size: 11px;')
+        form.addRow(self._status)
+
         btns = QHBoxLayout()
-        ok = QPushButton('Add'); ok.setObjectName('AccentBtn'); ok.clicked.connect(self._accept)
-        cancel = QPushButton('Cancel'); cancel.clicked.connect(self.reject)
-        btns.addWidget(ok); btns.addWidget(cancel)
+        self._ok = QPushButton('Add')
+        self._ok.setObjectName('AccentBtn')
+        self._ok.clicked.connect(self._accept)
+        cancel = QPushButton('Cancel')
+        cancel.clicked.connect(self.reject)
+        btns.addWidget(self._ok); btns.addWidget(cancel)
         form.addRow(btns)
 
+    # ── autocomplete ──
+    def _run_search(self):
+        query = self._sym.text().strip()
+        if len(query) < 2:
+            return
+        if self._search_job and self._search_job.isRunning():
+            self._search_job.terminate(); self._search_job.wait()
+        self._search_job = SearchWorker(query)
+        self._search_job.results_ready.connect(self._on_search_results)
+        self._search_job.start()
+
+    def _on_search_results(self, results: list):
+        self._sugg_map = {disp: sym for disp, sym in results}
+        self._completer_model.setStringList(list(self._sugg_map))
+        if results:
+            self._completer.complete()
+
+    def _on_suggestion_picked(self, display: str):
+        sym = self._sugg_map.get(display)
+        if sym:
+            QTimer.singleShot(0, lambda: self._sym.setText(sym))
+
+    # ── add + validate ──
     def _accept(self):
-        sym = self._sym.text().strip().upper()
+        text = self._sym.text().strip()
+        sym = self._sugg_map.get(text, text).upper()
         if not sym:
             QMessageBox.warning(self, 'Invalid', 'Symbol is required.')
             return
@@ -577,8 +627,28 @@ class AddHoldingDialog(QDialog):
         except ValueError:
             QMessageBox.warning(self, 'Invalid', 'Shares and avg cost must be numbers.')
             return
-        self.result_holding = {'symbol': sym, 'shares': shares, 'avg_cost': cost}
-        self.accept()
+
+        # validate the symbol actually has market data before accepting
+        self._pending = {'symbol': sym, 'shares': shares, 'avg_cost': cost}
+        self._ok.setEnabled(False)
+        self._status.setText(f'Checking {sym} …')
+        self._validate_job = PriceFetcher([sym])
+        self._validate_job.prices_ready.connect(self._on_validated)
+        self._validate_job.start()
+
+    def _on_validated(self, prices: dict):
+        sym = self._pending['symbol']
+        self._ok.setEnabled(True)
+        if sym in prices:
+            self.result_holding = self._pending
+            self.accept()
+        else:
+            self._status.setText('')
+            QMessageBox.warning(
+                self, 'Symbol not found',
+                f"Couldn't find market data for \"{sym}\".\n\n"
+                "Check the spelling, or start typing the company name and pick "
+                "a suggestion from the list.")
 
 
 class PortfolioDialog(QDialog):
@@ -608,6 +678,8 @@ class PortfolioDialog(QDialog):
         add = QPushButton('+ Add holding')
         add.setObjectName('AccentBtn')
         add.clicked.connect(self._add_holding)
+        rm = QPushButton('Remove holding')
+        rm.clicked.connect(self._remove_holding)
         cash_btn = QPushButton('Set cash…')
         cash_btn.clicked.connect(self._set_cash)
         imp = QPushButton('Import CSV…')
@@ -615,6 +687,7 @@ class PortfolioDialog(QDialog):
         ref = QPushButton('↻ Refresh prices')
         ref.clicked.connect(self._refresh_prices)
         top.addWidget(add)
+        top.addWidget(rm)
         top.addWidget(cash_btn)
         top.addWidget(imp)
         top.addWidget(ref)
@@ -626,7 +699,8 @@ class PortfolioDialog(QDialog):
         self._table.setHorizontalHeaderLabels(self.HEADERS)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.verticalHeader().setVisible(False)
         mid.addWidget(self._table, 3)
 
@@ -678,6 +752,23 @@ class PortfolioDialog(QDialog):
             save_portfolio(self._holdings, self._cash)
             self._status.setText(f"Saved {h['symbol']}.")
             self._refresh_prices()
+
+    def _remove_holding(self):
+        rows = self._table.selectionModel().selectedRows()
+        if not rows:
+            self._status.setText('Select a holding row first, then click Remove.')
+            return
+        i = rows[0].row()
+        if not (0 <= i < len(self._holdings)):
+            return
+        sym = self._holdings[i]['symbol']
+        if QMessageBox.question(
+                self, 'Remove holding',
+                f'Remove {sym} from your portfolio?') == QMessageBox.StandardButton.Yes:
+            del self._holdings[i]
+            save_portfolio(self._holdings, self._cash)
+            self._status.setText(f'Removed {sym}.')
+            self._render()
 
     def _set_cash(self):
         value, ok = QInputDialog.getDouble(

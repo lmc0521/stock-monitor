@@ -116,16 +116,24 @@ def test_quotes():
 # ── 4. SearchWorker / autocomplete (network) ────────────────────────────────
 def test_search():
     print('\n[4] SearchWorker autocomplete  (requires internet)')
-    try:
-        results = run_worker(main.SearchWorker('apple'), 'results_ready')
-    except Exception as exc:
-        check('SearchWorker ran without exception', False, detail=str(exc))
-        return
+    import time as _time
+    suggestions = []
+    # Yahoo throttles bursts: retry a few times before declaring failure.
+    for attempt in range(4):
+        try:
+            results = run_worker(main.SearchWorker('apple'), 'results_ready')
+        except Exception as exc:
+            check('SearchWorker ran without exception', False, detail=str(exc))
+            return
+        suggestions = results[0][0] if results else []
+        if suggestions:
+            break
+        _time.sleep(2)
 
-    check('search returned a result list', len(results) == 1)
-    if not results:
+    check('search returned suggestions (after retries)', len(suggestions) >= 1,
+          detail=f'{len(suggestions)} hits')
+    if not suggestions:
         return
-    suggestions = results[0][0]   # the emitted list[(display, symbol)]
     check('got >=1 suggestion for "apple"', len(suggestions) >= 1,
           detail=f'{len(suggestions)} hits')
     symbols = [sym for _, sym in suggestions]
