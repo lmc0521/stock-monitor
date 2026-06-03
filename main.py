@@ -14,19 +14,21 @@ from PyQt6.QtWidgets import (
     QPushButton, QListWidget, QListWidgetItem, QLineEdit, QLabel,
     QMessageBox, QSizePolicy, QFrame, QCompleter, QDialog, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QFileDialog, QTextEdit,
-    QFormLayout, QInputDialog
+    QFormLayout, QInputDialog, QComboBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QStringListModel, QTimer
 from PyQt6.QtGui import QFont, QColor
 
 import mplfinance as mpf
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 
 import llm
 import data
 
 WATCHLIST_FILE = os.path.join(os.path.dirname(__file__), 'watchlist.json')
 PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), 'portfolio.json')
+ALERTS_FILE    = os.path.join(os.path.dirname(__file__), 'alerts.json')
 
 PERIODS = {
     '1D':  ('1d',  '5m'),
@@ -141,6 +143,42 @@ def load_portfolio():
 def save_portfolio(holdings: list, cash: float):
     with open(PORTFOLIO_FILE, 'w') as f:
         json.dump({'holdings': holdings, 'cash': cash}, f, indent=2)
+
+
+# ── price alerts (SCADA-style alarms) ─────────────────────────────────────────
+
+def load_alerts() -> list:
+    if os.path.exists(ALERTS_FILE):
+        try:
+            with open(ALERTS_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+
+def save_alerts(alerts: list):
+    with open(ALERTS_FILE, 'w') as f:
+        json.dump(alerts, f, indent=2)
+
+
+def evaluate_alerts(alerts: list, symbol: str, price: float) -> list:
+    """
+    Check a fresh price against the alerts for `symbol`. Returns the list of alerts
+    that newly fired this call, and marks them 'triggered' so they don't re-fire
+    until re-armed. Pure logic — no I/O.
+
+    Each alert: {'symbol', 'condition': 'above'|'below', 'price', 'enabled', 'triggered'}
+    """
+    fired = []
+    for a in alerts:
+        if a.get('symbol') != symbol or not a.get('enabled', True) or a.get('triggered'):
+            continue
+        cond, thr = a.get('condition'), a.get('price')
+        if (cond == 'above' and price >= thr) or (cond == 'below' and price <= thr):
+            a['triggered'] = True
+            fired.append(a)
+    return fired
 
 
 # ── workers ───────────────────────────────────────────────────────────────────
@@ -290,6 +328,11 @@ class StockRow(QWidget):
         arrow = '▲' if pct >= 0 else '▼'
         self._price.setText(f'{price:,.2f}  {arrow} {abs(pct):.2f}%')
         self._price.setStyleSheet(f'color: {color}; background: transparent;')
+
+    def set_alarm(self, on: bool):
+        """Highlight the row when one of its price alerts has fired."""
+        self._sym.setText(('🔔 ' if on else '') + self.symbol)
+        self.setStyleSheet('background:#3a1620; border-radius:4px;' if on else '')
 
 
 # ── chart panel ────────────────────────────────────────────────────────────
@@ -492,7 +535,7 @@ class PortfolioDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle('Portfolio / P&L')
-        self.resize(860, 500)
+        self.resize(1140, 520)
 
         self._holdings, self._cash = load_portfolio()
         self._prices = {}
@@ -525,13 +568,22 @@ class PortfolioDialog(QDialog):
         top.addStretch()
         layout.addLayout(top)
 
+        mid = QHBoxLayout()
         self._table = QTableWidget(0, len(self.HEADERS))
         self._table.setHorizontalHeaderLabels(self.HEADERS)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self._table.verticalHeader().setVisible(False)
-        layout.addWidget(self._table)
+        mid.addWidget(self._table, 3)
+
+        pie_container = QWidget()
+        pie_container.setFixedWidth(300)
+        self._pie_layout = QVBoxLayout(pie_container)
+        self._pie_layout.setContentsMargins(0, 0, 0, 0)
+        self._pie_canvas = None
+        mid.addWidget(pie_container, 0)
+        layout.addLayout(mid)
 
         self._summary = QLabel('')
         self._summary.setFont(QFont('Segoe UI', 11, QFont.Weight.Bold))
@@ -641,6 +693,44 @@ class PortfolioDialog(QDialog):
             f"P&L {tp:+,.2f} ({result['total_pnl_pct']:+.2f}%)"
         )
         self._summary.setStyleSheet(f'color: {col};')
+        self._draw_pie(result)
+
+    def _draw_pie(self, result):
+        """Render an allocation pie (by market value of priced holdings + cash)."""
+        if self._pie_canvas:
+            self._pie_layout.removeWidget(self._pie_canvas)
+            self._pie_canvas.deleteLater()
+            self._pie_canvas = None
+
+        labels, values = [], []
+        for row in result['rows']:
+            if row['mkt']:
+                labels.append(row['symbol'])
+                values.append(row['mkt'])
+        if result['cash'] > 0:
+            labels.append('CASH')
+            values.append(result['cash'])
+        if not values:
+            return
+
+        fig = Figure(figsize=(3.0, 3.4), facecolor=DARK_BG)
+        ax = fig.add_subplot(111)
+        wedges, _texts, autotexts = ax.pie(
+            values, labels=labels, autopct='%1.0f%%', startangle=90,
+            pctdistance=0.75, labeldistance=1.08,
+            textprops={'color': TEXT, 'fontsize': 8},
+            wedgeprops={'edgecolor': DARK_BG, 'linewidth': 1},
+        )
+        for at in autotexts:
+            at.set_color('#0d0d1a')
+            at.set_fontsize(7)
+        ax.set_title('Allocation by value', color=TEXT, fontsize=10)
+        ax.axis('equal')
+        fig.tight_layout()
+
+        self._pie_canvas = FigureCanvas(fig)
+        self._pie_layout.addWidget(self._pie_canvas)
+        self._pie_canvas.draw()
 
 
 # ── AI insights dialog ────────────────────────────────────────────────────────
@@ -765,6 +855,127 @@ class InsightsDialog(QDialog):
         self._input.setEnabled(not busy)
 
 
+# ── price-alerts dialog ───────────────────────────────────────────────────────
+
+class AlertsDialog(QDialog):
+    HEADERS = ['Symbol', 'Condition', 'Price', 'Status']
+
+    def __init__(self, parent, alerts: list, watchlist: list, on_change=None):
+        super().__init__(parent)
+        self.setWindowTitle('Price Alerts')
+        self.resize(560, 460)
+        self.setStyleSheet(parent.styleSheet() if parent else '')
+        self._alerts = alerts          # shared list (mutated in place)
+        self._watchlist = watchlist
+        self._on_change = on_change
+        self._build_ui()
+        self._render()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        form = QHBoxLayout()
+        self._sym = QLineEdit()
+        self._sym.setPlaceholderText('Symbol')
+        if self._watchlist:
+            comp = QCompleter(self._watchlist, self)
+            comp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            self._sym.setCompleter(comp)
+        self._cond = QComboBox()
+        self._cond.addItems(['above', 'below'])
+        self._price = QLineEdit()
+        self._price.setPlaceholderText('Price')
+        add = QPushButton('+ Add')
+        add.setObjectName('AccentBtn')
+        add.clicked.connect(self._add)
+        form.addWidget(self._sym, 2)
+        form.addWidget(self._cond, 1)
+        form.addWidget(self._price, 1)
+        form.addWidget(add, 0)
+        layout.addLayout(form)
+
+        self._table = QTableWidget(0, len(self.HEADERS))
+        self._table.setHorizontalHeaderLabels(self.HEADERS)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.verticalHeader().setVisible(False)
+        layout.addWidget(self._table)
+
+        btns = QHBoxLayout()
+        rm = QPushButton('Remove')
+        rm.clicked.connect(self._remove)
+        rearm = QPushButton('Re-arm')
+        rearm.clicked.connect(self._rearm)
+        btns.addWidget(rm)
+        btns.addWidget(rearm)
+        btns.addStretch()
+        layout.addLayout(btns)
+
+        hint = QLabel('Alerts are checked on every price refresh (auto every 60s). '
+                      'A fired alert must be re-armed before it can fire again.')
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f'color: {SUBTEXT}; font-size: 11px;')
+        layout.addWidget(hint)
+
+    def _render(self):
+        self._table.setRowCount(len(self._alerts))
+        for r, a in enumerate(self._alerts):
+            triggered = a.get('triggered')
+            cells = [
+                a.get('symbol', ''),
+                a.get('condition', ''),
+                f"{a.get('price', 0):,.2f}",
+                'TRIGGERED' if triggered else 'armed',
+            ]
+            for c, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                if c == 3:
+                    item.setForeground(QColor(DOWN_COLOR if triggered else UP_COLOR))
+                self._table.setItem(r, c, item)
+
+    def _save(self):
+        save_alerts(self._alerts)
+        if self._on_change:
+            self._on_change()
+        self._render()
+
+    def _add(self):
+        sym = self._sym.text().strip().upper()
+        if not sym:
+            QMessageBox.warning(self, 'Invalid', 'Symbol is required.')
+            return
+        try:
+            price = float(self._price.text())
+        except ValueError:
+            QMessageBox.warning(self, 'Invalid', 'Price must be a number.')
+            return
+        self._alerts.append({
+            'symbol': sym, 'condition': self._cond.currentText(),
+            'price': price, 'enabled': True, 'triggered': False,
+        })
+        self._sym.clear()
+        self._price.clear()
+        self._save()
+
+    def _selected_row(self):
+        rows = self._table.selectionModel().selectedRows()
+        return rows[0].row() if rows else -1
+
+    def _remove(self):
+        i = self._selected_row()
+        if 0 <= i < len(self._alerts):
+            del self._alerts[i]
+            self._save()
+
+    def _rearm(self):
+        i = self._selected_row()
+        if 0 <= i < len(self._alerts):
+            self._alerts[i]['triggered'] = False
+            self._save()
+
+
 # ── main window ──────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -781,6 +992,7 @@ class MainWindow(QMainWindow):
         self._period_key = '1M'
         self._rows       = {}          # symbol -> StockRow
         self._sugg_map   = {}          # display string -> symbol
+        self._alerts     = load_alerts()
 
         self._build_ui()
         self._apply_theme()
@@ -882,6 +1094,11 @@ class MainWindow(QMainWindow):
         ai_btn.clicked.connect(self._open_insights)
         layout.addWidget(ai_btn)
 
+        alert_btn = QPushButton('🔔 Price Alerts')
+        alert_btn.setObjectName('AccentBtn')
+        alert_btn.clicked.connect(self._open_alerts)
+        layout.addWidget(alert_btn)
+
         return panel
 
     def _build_right_panel(self) -> QWidget:
@@ -951,6 +1168,7 @@ class MainWindow(QMainWindow):
             self._rows[sym] = row
             self._list.addItem(item)
             self._list.setItemWidget(item, row)
+        self._sync_alarms()
 
     def _row_hint(self):
         from PyQt6.QtCore import QSize
@@ -998,6 +1216,34 @@ class MainWindow(QMainWindow):
         row = self._rows.get(sym)
         if row:
             row.set_quote(price, pct)
+        self._check_alerts(sym, price)
+
+    # ── price alerts ──
+    def _open_alerts(self):
+        AlertsDialog(self, self._alerts, list(self._watchlist),
+                     on_change=self._sync_alarms).exec()
+        self._sync_alarms()
+
+    def _check_alerts(self, sym: str, price: float):
+        fired = evaluate_alerts(self._alerts, sym, price)
+        if not fired:
+            return
+        save_alerts(self._alerts)
+        QApplication.beep()
+        lines = [f"{a['symbol']} went {a['condition']} {a['price']:.2f}  (now {price:.2f})"
+                 for a in fired]
+        for a in fired:
+            row = self._rows.get(a['symbol'])
+            if row:
+                row.set_alarm(True)
+        self._status.setText('🔔 ALERT — ' + '; '.join(lines))
+        QMessageBox.information(self, 'Price alert', '\n'.join(lines))
+
+    def _sync_alarms(self):
+        """Re-apply the row highlight based on which alerts are currently triggered."""
+        for sym, row in self._rows.items():
+            active = any(a.get('triggered') and a.get('symbol') == sym for a in self._alerts)
+            row.set_alarm(active)
 
     def _hard_refresh(self):
         """Bypass the cache: re-fetch quotes and the current chart from source."""
@@ -1100,7 +1346,34 @@ class MainWindow(QMainWindow):
         """)
 
 
+def _load_dotenv():
+    """
+    Load KEY=VALUE pairs from a .env file next to this script into os.environ.
+
+    Lets the app find ANTHROPIC_API_KEY regardless of how it's launched, instead
+    of relying on a session-local `set` in one specific terminal. Existing
+    environment variables take precedence (a real env var overrides the file).
+    """
+    path = os.path.join(os.path.dirname(__file__), '.env')
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, _, val = line.partition('=')
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except Exception:
+        pass
+
+
 def main():
+    _load_dotenv()
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     win = MainWindow()

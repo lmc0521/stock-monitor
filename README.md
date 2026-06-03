@@ -32,19 +32,36 @@ inspector, portfolio P&L tracking, and Claude-powered, portfolio-aware analysis.
 pip install -r requirements.txt
 ```
 
-Set your Claude API key (only needed for AI Insights):
+### Claude API key (only needed for AI Insights)
+
+**Easiest — use a `.env` file (recommended):** copy `.env.example` to `.env` in
+this folder and put your key in it. The app loads it automatically on startup, so
+it works no matter how you launch the app. `.env` is gitignored.
+
+```
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+```
+
+> No quotes, no spaces around the `=`.
+
+**Alternative — a real environment variable.** Note that `set ANTHROPIC_API_KEY=...`
+in cmd only applies to *that one window* and won't reach the app if you launch it
+elsewhere. To make it stick:
 
 ```powershell
-# Windows (permanent)
+# Windows — permanent (then open a NEW terminal so it takes effect)
 setx ANTHROPIC_API_KEY "sk-ant-..."
-# or for the current session only
-$env:ANTHROPIC_API_KEY = "sk-ant-..."
+
+# Windows — current session only; you must run `python main.py` in the SAME window
+set ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ```bash
 # macOS / Linux
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
+
+A real environment variable takes precedence over the `.env` file.
 
 ## Run
 

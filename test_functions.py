@@ -254,6 +254,37 @@ def test_cache():
     datamod.clear_cache()
 
 
+# ── 9. price-alert evaluation (offline) ──────────────────────────────────────
+def test_alerts():
+    print('\n[9] Price-alert evaluation (offline)')
+    alerts = [
+        {'symbol': 'AAA', 'condition': 'above', 'price': 100.0, 'enabled': True,  'triggered': False},
+        {'symbol': 'AAA', 'condition': 'below', 'price': 50.0,  'enabled': True,  'triggered': False},
+        {'symbol': 'BBB', 'condition': 'above', 'price': 10.0,  'enabled': False, 'triggered': False},
+    ]
+
+    # price 105 -> only the 'above 100' alert fires
+    fired = main.evaluate_alerts(alerts, 'AAA', 105.0)
+    check('above-threshold fires once', len(fired) == 1 and fired[0]['price'] == 100.0,
+          detail=str([a['price'] for a in fired]))
+    check('fired alert is marked triggered', alerts[0]['triggered'] is True)
+
+    # firing again does NOT re-fire (already triggered)
+    fired2 = main.evaluate_alerts(alerts, 'AAA', 106.0)
+    check('does not re-fire until re-armed', fired2 == [])
+
+    # the 'below 50' alert fires when price drops
+    fired3 = main.evaluate_alerts(alerts, 'AAA', 40.0)
+    check('below-threshold fires', len(fired3) == 1 and fired3[0]['condition'] == 'below')
+
+    # disabled alert never fires
+    fired4 = main.evaluate_alerts(alerts, 'BBB', 999.0)
+    check('disabled alert is ignored', fired4 == [])
+
+    # wrong symbol ignored
+    check('other symbols ignored', main.evaluate_alerts(alerts, 'ZZZ', 1e9) == [])
+
+
 def main_run():
     QApplication(sys.argv)   # needed so QObject/QThread can be constructed
     print('=' * 60)
@@ -266,6 +297,7 @@ def main_run():
     test_csv_parse()
     test_llm_prompt()
     test_cache()
+    test_alerts()
     test_quotes()
     test_search()
 

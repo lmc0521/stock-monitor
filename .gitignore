@@ -8,6 +8,7 @@ venv/
 # App state (user-specific)
 watchlist.json
 portfolio.json
+alerts.json
 
 # Test / smoke-test artifacts
 smoke_test.png
