@@ -27,9 +27,17 @@ import llm
 import data
 import indicators as ta
 
-WATCHLIST_FILE = os.path.join(os.path.dirname(__file__), 'watchlist.json')
-PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), 'portfolio.json')
-ALERTS_FILE    = os.path.join(os.path.dirname(__file__), 'alerts.json')
+def _app_dir() -> str:
+    """Directory for read/write state — next to the .exe when frozen, else the source dir."""
+    if getattr(sys, 'frozen', False):           # running as a PyInstaller bundle
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+_APP_DIR = _app_dir()
+WATCHLIST_FILE = os.path.join(_APP_DIR, 'watchlist.json')
+PORTFOLIO_FILE = os.path.join(_APP_DIR, 'portfolio.json')
+ALERTS_FILE    = os.path.join(_APP_DIR, 'alerts.json')
 
 PERIODS = {
     '1D':  ('1d',  '5m'),
@@ -1420,7 +1428,7 @@ def _load_dotenv():
     of relying on a session-local `set` in one specific terminal. Existing
     environment variables take precedence (a real env var overrides the file).
     """
-    path = os.path.join(os.path.dirname(__file__), '.env')
+    path = os.path.join(_APP_DIR, '.env')
     if not os.path.exists(path):
         return
     try:

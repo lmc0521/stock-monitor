@@ -71,6 +71,20 @@ python main.py
 
 On Windows you can also double-click `run.bat`.
 
+## Build a standalone .exe (Windows)
+
+To produce a double-clickable executable that runs without Python installed:
+
+```bash
+pip install pyinstaller
+pyinstaller --noconfirm StockMonitor.spec
+```
+
+Or double-click `build_exe.bat`. The result is `dist\StockMonitor.exe` (~90 MB,
+single file). Put your `.env` file **next to the .exe** for AI Insights; the app
+reads/writes `watchlist.json`, `portfolio.json`, and `alerts.json` in the same
+folder as the executable.
+
 ## Portfolio CSV format
 
 Columns: `symbol, shares, avg_cost`. A row with symbol `CASH` sets the cash

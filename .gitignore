@@ -17,6 +17,10 @@ portfolio_smoke.png
 # Secrets — never commit API keys
 .env
 
+# PyInstaller build output
+build/
+dist/
+
 # OS
 Thumbs.db
 .DS_Store
