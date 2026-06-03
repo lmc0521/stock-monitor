@@ -33,6 +33,9 @@ def run():
     app.setStyle('Fusion')
 
     win = main.MainWindow()
+    win._indicators = {'BBANDS', 'RSI', 'MACD'}   # exercise all indicator panels
+    for k, b in getattr(win, '_ind_btns', {}).items():
+        b.setChecked(k in win._indicators)
     win.show()
 
     state = {'added': False, 'done': False, 'elapsed': 0}

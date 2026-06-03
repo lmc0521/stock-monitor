@@ -285,6 +285,36 @@ def test_alerts():
     check('other symbols ignored', main.evaluate_alerts(alerts, 'ZZZ', 1e9) == [])
 
 
+# ── 10. technical indicators (offline) ───────────────────────────────────────
+def test_indicators():
+    print('\n[10] Technical indicators (offline)')
+    import indicators as ta
+
+    # RSI of a strictly rising series approaches 100
+    rising = pd.Series([float(i) for i in range(1, 40)])
+    r = ta.rsi(rising, n=14)
+    check('RSI of monotonic-up series ~100', r.iloc[-1] > 99, detail=f'{r.iloc[-1]:.2f}')
+
+    # RSI of a strictly falling series approaches 0
+    falling = pd.Series([float(i) for i in range(40, 1, -1)])
+    rf = ta.rsi(falling, n=14)
+    check('RSI of monotonic-down series ~0', rf.iloc[-1] < 1, detail=f'{rf.iloc[-1]:.2f}')
+
+    # Bollinger: price sits between bands; mid == SMA
+    close = pd.Series([10, 11, 12, 11, 10, 12, 13, 14, 13, 12,
+                       11, 12, 13, 14, 15, 16, 15, 14, 13, 14], dtype=float)
+    mid, up, lo = ta.bollinger(close, n=20, k=2)
+    check('Bollinger mid == 20-SMA', abs(mid.iloc[-1] - close.mean()) < 1e-9)
+    check('upper band above mid', up.iloc[-1] > mid.iloc[-1])
+    check('lower band below mid', lo.iloc[-1] < mid.iloc[-1])
+
+    # MACD: histogram == line - signal
+    line, sig, hist = ta.macd(close)
+    check('MACD hist == line - signal', abs((hist - (line - sig)).abs().max()) < 1e-9)
+    # for a rising tail, MACD line should be positive
+    check('MACD line positive on uptrend', line.iloc[-1] > 0, detail=f'{line.iloc[-1]:.3f}')
+
+
 def main_run():
     QApplication(sys.argv)   # needed so QObject/QThread can be constructed
     print('=' * 60)
@@ -298,6 +328,7 @@ def main_run():
     test_llm_prompt()
     test_cache()
     test_alerts()
+    test_indicators()
     test_quotes()
     test_search()
 

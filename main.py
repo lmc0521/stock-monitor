@@ -25,6 +25,7 @@ from matplotlib.figure import Figure
 
 import llm
 import data
+import indicators as ta
 
 WATCHLIST_FILE = os.path.join(os.path.dirname(__file__), 'watchlist.json')
 PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), 'portfolio.json')
@@ -367,7 +368,7 @@ class ChartPanel(QWidget):
         self._press_timer.setInterval(self.LONG_PRESS_MS)
         self._press_timer.timeout.connect(self._activate)
 
-    def render(self, df, symbol: str, period_key: str):
+    def render(self, df, symbol: str, period_key: str, indicators=None):
         if self._canvas:
             self._layout.removeWidget(self._canvas)
             self._canvas.deleteLater()
@@ -375,6 +376,7 @@ class ChartPanel(QWidget):
         self._placeholder.hide()
         self._active = False
         self._press_timer.stop()
+        indicators = indicators or set()
 
         style = mpf.make_mpf_style(
             base_mpf_style='nightclouds',
@@ -383,15 +385,58 @@ class ChartPanel(QWidget):
             rc={'axes.labelcolor': TEXT, 'xtick.color': SUBTEXT, 'ytick.color': SUBTEXT},
         )
 
-        # EMA overlays
+        close = df['Close']
+        n = len(df)
+
+        # panel layout: 0 = price, 1 = volume, then one panel per oscillator
+        next_panel = 2
+        rsi_panel = macd_panel = None
+        panel_ratios = [3, 1]
+        if 'RSI' in indicators:
+            rsi_panel = next_panel; next_panel += 1; panel_ratios.append(1.4)
+        if 'MACD' in indicators:
+            macd_panel = next_panel; next_panel += 1; panel_ratios.append(1.4)
+
+        # EMA overlays (price panel)
         addplots = []
         for span, color in EMAS.items():
-            ema = df['Close'].ewm(span=span, adjust=False).mean()
-            addplots.append(mpf.make_addplot(ema, color=color, width=1.0))
+            addplots.append(mpf.make_addplot(
+                close.ewm(span=span, adjust=False).mean(), color=color, width=1.0))
+
+        # Bollinger Bands (price panel)
+        if 'BBANDS' in indicators:
+            mid, up, lo = ta.bollinger(close)
+            addplots += [
+                mpf.make_addplot(up,  color='#7e8aa2', width=0.8),
+                mpf.make_addplot(mid, color='#7e8aa2', width=0.6, linestyle='--'),
+                mpf.make_addplot(lo,  color='#7e8aa2', width=0.8),
+            ]
+
+        # RSI panel (with 70/30 guide lines)
+        if rsi_panel is not None:
+            addplots += [
+                mpf.make_addplot(ta.rsi(close), panel=rsi_panel, color='#f5d142',
+                                 width=1.0, ylabel='RSI'),
+                mpf.make_addplot([70] * n, panel=rsi_panel, color=DOWN_COLOR, width=0.6),
+                mpf.make_addplot([30] * n, panel=rsi_panel, color=UP_COLOR,   width=0.6),
+            ]
+
+        # MACD panel (histogram + line + signal)
+        if macd_panel is not None:
+            line, sig, hist = ta.macd(close)
+            bar_colors = [UP_COLOR if h >= 0 else DOWN_COLOR for h in hist.fillna(0)]
+            addplots += [
+                mpf.make_addplot(hist, panel=macd_panel, type='bar',
+                                 color=bar_colors, width=0.7, alpha=0.5),
+                mpf.make_addplot(line, panel=macd_panel, color='#42c5f5',
+                                 width=1.0, ylabel='MACD'),
+                mpf.make_addplot(sig,  panel=macd_panel, color='#f542e6', width=1.0),
+            ]
 
         fig, axlist = mpf.plot(
             df, type='candle', style=style, volume=True,
-            addplot=addplots, returnfig=True, figsize=(12, 7),
+            addplot=addplots, panel_ratios=tuple(panel_ratios),
+            returnfig=True, figsize=(12, 8),
             title=f'\n{symbol}  [{period_key}]',
         )
         fig.patch.set_facecolor(DARK_BG)
@@ -990,6 +1035,7 @@ class MainWindow(QMainWindow):
         self._search_job = None
         self._selected   = None
         self._period_key = '1M'
+        self._indicators = set()       # active overlays: BBANDS / RSI / MACD
         self._rows       = {}          # symbol -> StockRow
         self._sugg_map   = {}          # display string -> symbol
         self._alerts     = load_alerts()
@@ -1127,7 +1173,27 @@ class MainWindow(QMainWindow):
             bar.addWidget(btn)
             self._period_btns[label] = btn
         bar.addStretch()
+
+        # indicator toggles on the right
+        self._ind_btns = {}
+        for key, label in [('BBANDS', 'BB'), ('RSI', 'RSI'), ('MACD', 'MACD')]:
+            btn = QPushButton(label)
+            btn.setFixedSize(56, 28)
+            btn.setObjectName('PeriodBtn')
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda _, k=key: self._toggle_indicator(k))
+            bar.addWidget(btn)
+            self._ind_btns[key] = btn
         return bar
+
+    def _toggle_indicator(self, key: str):
+        if key in self._indicators:
+            self._indicators.discard(key)
+        else:
+            self._indicators.add(key)
+        self._ind_btns[key].setChecked(key in self._indicators)
+        if self._selected:
+            self._fetch()
 
     # ── autocomplete ──
     def _on_text_edited(self, _text: str):
@@ -1286,7 +1352,7 @@ class MainWindow(QMainWindow):
         self._fetcher.start()
 
     def _on_data(self, df, symbol: str):
-        self._chart.render(df, symbol, self._period_key)
+        self._chart.render(df, symbol, self._period_key, self._indicators)
         self._status.setText(
             f'{symbol}  [{self._period_key}]  —  {len(df)} bars  |  '
             f'Last close: {df["Close"].iloc[-1]:.2f}'
