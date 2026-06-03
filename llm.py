@@ -32,10 +32,18 @@ user's existing exposure. Offer a confidence level and the main risk for each id
 - Be concise and skimmable. Use short markdown sections and bullet points. Lead with the \
 single most important takeaway.
 
+Tools — you can access the internet:
+- You have web_search and web_fetch tools. Use them to look up current fundamentals, \
+valuations, recent news, analyst commentary, earnings dates, and volatility for the user's \
+symbols whenever it would sharpen the analysis. Prefer recent, reputable sources and cite \
+them inline with the source name and date (e.g. "(Reuters, 2026-06-02)").
+- Treat the prices in the user's message as their authoritative portfolio snapshot for cost \
+basis and P&L. Use the web to add context around them (recent moves, catalysts, whether a \
+name is near its highs or lows), not to second-guess the user's stated holdings.
+
 Hard rules:
-- You do NOT have live market data beyond the prices provided in the user's message. Never \
-invent or guess current prices, fundamentals, or news. If a judgement needs data you don't \
-have, say so explicitly.
+- Do not fabricate data. If a search returns nothing useful or you are unsure, say so plainly \
+rather than guessing, and distinguish the user's snapshot numbers from what you found online.
 - This is analysis and education, NOT personalized financial advice. Do not tell the user to \
 buy or sell. Frame ideas as considerations to research, and end every response with a one-line \
 reminder that this is not financial advice and that they should do their own research."""
@@ -118,6 +126,11 @@ def stream_insights(question: str, portfolio_result: dict,
         # effort medium: a latency/cost balance that suits an interactive desktop app;
         # bump to "high" for deeper analysis.
         output_config={"effort": "medium"},
+        # server-side web tools so Claude can pull live fundamentals/news itself
+        tools=[
+            {"type": "web_search_20260209", "name": "web_search"},
+            {"type": "web_fetch_20260209", "name": "web_fetch"},
+        ],
         system=[{
             "type": "text",
             "text": SYSTEM_PROMPT,

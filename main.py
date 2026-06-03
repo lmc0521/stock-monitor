@@ -934,7 +934,7 @@ class InsightsDialog(QDialog):
         layout.addWidget(self._status)
 
         disclaimer = QLabel('⚠ Educational analysis only — not financial advice. '
-                            'The model only sees the prices shown in the app.')
+                            'Uses live web search; verify anything important yourself.')
         disclaimer.setWordWrap(True)
         disclaimer.setStyleSheet('color: #c9a227; font-size: 11px;')
         layout.addWidget(disclaimer)
