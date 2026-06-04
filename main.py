@@ -28,6 +28,7 @@ import data
 import indicators as ta
 import sentiment
 import history
+import thirteenf
 
 def _app_dir() -> str:
     """Directory for read/write state — next to the .exe when frozen, else the source dir."""
@@ -317,6 +318,22 @@ class HistoryWorker(QThread):
         try:
             total, invested = history.build_history(self.holdings, self.cash)
             self.ready.emit(total, invested)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+class ThirteenFWorker(QThread):
+    """Fetches a manager's latest 13F holdings from SEC EDGAR off the UI thread."""
+    ready = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, cik: str):
+        super().__init__()
+        self.cik = cik
+
+    def run(self):
+        try:
+            self.ready.emit(thirteenf.get_holdings(self.cik))
         except Exception as exc:
             self.error.emit(str(exc))
 
@@ -1431,6 +1448,112 @@ class HistoryDialog(QDialog):
         self._canvas.draw()
 
 
+# ── 13F holdings dialog ───────────────────────────────────────────────────────
+
+class ThirteenFDialog(QDialog):
+    HEADERS = ['#', 'Issuer', 'Class', 'Value', '% Port', 'Shares']
+    MAX_ROWS = 100
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('13F Institutional Holdings')
+        self.resize(900, 640)
+        self.setStyleSheet(parent.styleSheet() if parent else '')
+        self._job = None
+        self._build_ui()
+        self._load()                 # auto-load the first preset
+
+    @staticmethod
+    def _money(v: float) -> str:
+        v = float(v)
+        if abs(v) >= 1e9:
+            return f'${v/1e9:.2f}B'
+        if abs(v) >= 1e6:
+            return f'${v/1e6:.1f}M'
+        return f'${v:,.0f}'
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        top = QHBoxLayout()
+        self._combo = QComboBox()
+        for name in thirteenf.KNOWN_FUNDS:
+            self._combo.addItem(name)
+        self._cik = QLineEdit()
+        self._cik.setPlaceholderText('or custom CIK')
+        self._cik.setFixedWidth(130)
+        self._cik.returnPressed.connect(self._load)
+        load = QPushButton('Load')
+        load.setObjectName('AccentBtn')
+        load.clicked.connect(self._load)
+        top.addWidget(self._combo, 1)
+        top.addWidget(self._cik)
+        top.addWidget(load)
+        layout.addLayout(top)
+
+        self._header = QLabel('')
+        self._header.setWordWrap(True)
+        self._header.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._header)
+
+        self._table = QTableWidget(0, len(self.HEADERS))
+        self._table.setHorizontalHeaderLabels(self.HEADERS)
+        hh = self._table.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)   # Issuer stretches
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._table.verticalHeader().setVisible(False)
+        layout.addWidget(self._table)
+
+        self._status = QLabel('')
+        self._status.setStyleSheet(f'color: {SUBTEXT}; font-size: 11px;')
+        layout.addWidget(self._status)
+        disc = QLabel('Source: SEC EDGAR 13F-HR filings. Filed quarterly with a '
+                      '~45-day delay — these are last-quarter positions, not live. '
+                      'If a preset shows no data, enter the manager\'s CIK.')
+        disc.setWordWrap(True)
+        disc.setStyleSheet(f'color: {SUBTEXT}; font-size: 10px;')
+        layout.addWidget(disc)
+
+    def _cell(self, row, col, text, left=False):
+        item = QTableWidgetItem(text)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | (
+            Qt.AlignmentFlag.AlignLeft if left else Qt.AlignmentFlag.AlignRight))
+        self._table.setItem(row, col, item)
+
+    def _load(self):
+        if self._job and self._job.isRunning():
+            return
+        cik = self._cik.text().strip() or thirteenf.KNOWN_FUNDS.get(self._combo.currentText())
+        if not cik:
+            return
+        self._header.setText('')
+        self._status.setText('Fetching from SEC EDGAR …')
+        self._job = ThirteenFWorker(cik)
+        self._job.ready.connect(self._on_ready)
+        self._job.error.connect(lambda m: self._status.setText('Error: ' + m))
+        self._job.start()
+
+    def _on_ready(self, d: dict):
+        self._header.setText(
+            f"<b>{d['fund']}</b> (CIK {d['cik']}) &nbsp;—&nbsp; as of "
+            f"<b>{d['report_date']}</b>, filed {d['filing_date']} &nbsp;|&nbsp; "
+            f"{d['positions']} positions &nbsp;|&nbsp; total "
+            f"<b>{self._money(d['total_value'])}</b>")
+        rows = d['holdings'][:self.MAX_ROWS]
+        self._table.setRowCount(len(rows))
+        for r, h in enumerate(rows):
+            self._cell(r, 0, str(r + 1), left=True)
+            self._cell(r, 1, h['issuer'], left=True)
+            self._cell(r, 2, h['class'], left=True)
+            self._cell(r, 3, self._money(h['value']))
+            self._cell(r, 4, f"{h['pct']:.1f}%")
+            self._cell(r, 5, f"{h['shares']:,}")
+        extra = '' if d['positions'] <= self.MAX_ROWS else f' (showing top {self.MAX_ROWS})'
+        self._status.setText(f"Loaded {len(rows)} positions{extra}.")
+
+
 # ── main window ──────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -1565,6 +1688,11 @@ class MainWindow(QMainWindow):
         mood_btn.setObjectName('AccentBtn')
         mood_btn.clicked.connect(self._open_sentiment)
         layout.addWidget(mood_btn)
+
+        f13_btn = QPushButton('🏦 13F Holdings')
+        f13_btn.setObjectName('AccentBtn')
+        f13_btn.clicked.connect(self._open_13f)
+        layout.addWidget(f13_btn)
 
         return panel
 
@@ -1773,6 +1901,10 @@ class MainWindow(QMainWindow):
     # ── market sentiment ──
     def _open_sentiment(self):
         SentimentDialog(self).exec()
+
+    # ── 13F holdings ──
+    def _open_13f(self):
+        ThirteenFDialog(self).exec()
 
     # ── chart ──
     def _on_stock_clicked(self, item):

@@ -450,6 +450,52 @@ def test_history():
         _os.remove(cpath)
 
 
+# ── 13. 13F parsing + aggregation (offline) ──────────────────────────────────
+def test_13f():
+    print('\n[13] 13F parsing & aggregation (offline)')
+    import thirteenf as f13
+
+    ns = 'http://www.sec.gov/edgar/document/thirteenf/informationtable'
+    xml = f'''<?xml version="1.0"?>
+    <informationTable xmlns="{ns}">
+      <infoTable><nameOfIssuer>APPLE INC</nameOfIssuer><titleOfClass>COM</titleOfClass>
+        <cusip>037833100</cusip><value>1000</value>
+        <shrsOrPrnAmt><sshPrnamt>10</sshPrnamt></shrsOrPrnAmt></infoTable>
+      <infoTable><nameOfIssuer>APPLE INC</nameOfIssuer><titleOfClass>COM</titleOfClass>
+        <cusip>037833100</cusip><value>3000</value>
+        <shrsOrPrnAmt><sshPrnamt>30</sshPrnamt></shrsOrPrnAmt></infoTable>
+      <infoTable><nameOfIssuer>COCA COLA CO</nameOfIssuer><titleOfClass>COM</titleOfClass>
+        <cusip>191216100</cusip><value>6000</value>
+        <shrsOrPrnAmt><sshPrnamt>60</sshPrnamt></shrsOrPrnAmt></infoTable>
+    </informationTable>'''.encode()
+
+    rows = f13.parse_information_table(xml)
+    check('parsed 3 raw positions', len(rows) == 3, detail=str(len(rows)))
+    check('value parsed as int', rows[0]['value'] == 1000)
+
+    agg = f13.aggregate(rows)
+    check('aggregated to 2 issuers', len(agg) == 2, detail=str(len(agg)))
+    # Coca-Cola 6000 should rank above the merged Apple 4000
+    check('sorted by value desc', agg[0]['issuer'] == 'COCA COLA CO', detail=agg[0]['issuer'])
+    apple = next(a for a in agg if a['issuer'] == 'APPLE INC')
+    check('duplicate Apple merged (value 4000)', apple['value'] == 4000, detail=str(apple['value']))
+    check('duplicate Apple shares summed (40)', apple['shares'] == 40, detail=str(apple['shares']))
+    check('pct of total computed (Apple 40%)', abs(apple['pct'] - 40.0) < 1e-9,
+          detail=f"{apple['pct']:.1f}%")
+
+    # CIK normalization tolerates zero-padding / non-digits
+    check('CIK normalize strips padding', f13._normalize_cik('0001067983') == '1067983')
+
+    # find_latest_13f picks the right filing
+    subs = {'filings': {'recent': {
+        'form': ['10-K', '13F-HR', '4'],
+        'accessionNumber': ['a-0', 'a-1', 'a-2'],
+        'reportDate': ['2026-01-01', '2026-03-31', '2026-04-01'],
+        'filingDate': ['2026-02-01', '2026-05-15', '2026-04-02']}}}
+    latest = f13.find_latest_13f(subs)
+    check('find_latest_13f returns the 13F-HR', latest[0] == 'a-1' and latest[1] == '2026-03-31')
+
+
 def main_run():
     QApplication(sys.argv)   # needed so QObject/QThread can be constructed
     print('=' * 60)
@@ -466,6 +512,7 @@ def main_run():
     test_indicators()
     test_sentiment()
     test_history()
+    test_13f()
     test_quotes()
     test_search()
 

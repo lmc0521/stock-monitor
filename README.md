@@ -22,6 +22,8 @@ inspector, portfolio P&L tracking, and Claude-powered, portfolio-aware analysis.
   daily snapshots to `history.json` going forward. Shows value vs. cost basis.
 - **Market Sentiment** — CNN Fear & Greed (+ its 7 components), the crypto
   Fear & Greed index, and the VIX, on color-coded gauges.
+- **13F Holdings** — browse what famous institutional managers (Berkshire,
+  BlackRock, etc.) hold, from their latest SEC EDGAR 13F filing.
 - **AI Insights** — sends your portfolio + watchlist snapshot to Claude for
   portfolio-aware analysis with **live web search** (current news, fundamentals,
   volatility), citing sources.
@@ -114,6 +116,7 @@ See `sample_portfolio.csv` for a ready-made example.
 | `indicators.py` | RSI / MACD / Bollinger / SMA math |
 | `sentiment.py` | Fear & Greed + VIX sentiment data |
 | `history.py` | Portfolio value reconstruction + daily snapshots |
+| `thirteenf.py` | SEC EDGAR 13F holdings fetch + parse |
 | `llm.py` | Claude prompt builders + streaming analysis (with web search) |
 | `test_functions.py` | Headless unit tests (persistence, EMA, P&L, prompts, cache) |
 | `smoke_test.py` | Launches the GUI, loads a chart, screenshots it |
