@@ -387,6 +387,20 @@ def test_sentiment():
     check('low VIX = Calm', sent.vix_mood(12)[0] == 'Calm')
     check('high VIX = High Fear', sent.vix_mood(35)[0] == 'High Fear')
 
+    # Buffett Indicator classification + World Bank parsing
+    check('Buffett 60% = undervalued', sent.classify_buffett(60)[0] == 'Significantly Undervalued')
+    check('Buffett 100% = fair', sent.classify_buffett(100)[0] == 'Fair Value')
+    check('Buffett 216% = significantly overvalued',
+          sent.classify_buffett(216)[0] == 'Significantly Overvalued')
+    wb = [{'page': 1}, [
+        {'date': '2025', 'value': None},          # newest, but null -> skip
+        {'date': '2024', 'value': 216.3},
+        {'date': '2023', 'value': 179.5},
+    ]]
+    parsed = sent.parse_buffett(wb)
+    check('Buffett uses latest non-null year', parsed['year'] == '2024' and abs(parsed['ratio'] - 216.3) < 1e-9,
+          detail=str(parsed))
+
 
 # ── 12. portfolio history reconstruction (offline) ───────────────────────────
 def test_history():

@@ -25,6 +25,9 @@ _HEADERS = {
 
 CNN_URL    = 'https://production.dataviz.cnn.io/index/fearandgreed/graphdata'
 CRYPTO_URL = 'https://api.alternative.me/fng/?limit=1'
+# World Bank: market cap of listed companies as % of GDP = the Buffett Indicator
+BUFFETT_URL = ('https://api.worldbank.org/v2/country/US/indicator/'
+               'CM.MKT.LCAP.GD.ZS?format=json&per_page=12&date=2015:2027')
 
 # Friendly names for the CNN component keys we want to show (skips duplicates).
 _CNN_COMPONENTS = {
@@ -98,6 +101,36 @@ def fetch_vix() -> float | None:
     return float(closes.iloc[-1]) if len(closes) else None
 
 
+def classify_buffett(pct: float | None) -> tuple[str, str]:
+    """Interpret the Buffett Indicator (total market cap as % of GDP)."""
+    if pct is None:
+        return ('Unknown', '#888888')
+    if pct < 75:
+        return ('Significantly Undervalued', '#1e8f6f')
+    if pct < 90:
+        return ('Modestly Undervalued', '#26a69a')
+    if pct < 115:
+        return ('Fair Value', '#c9a227')
+    if pct < 150:
+        return ('Overvalued', '#ef5350')
+    return ('Significantly Overvalued', '#c0392b')
+
+
+def parse_buffett(d) -> dict:
+    """Extract the most recent non-null market-cap/GDP % from World Bank JSON."""
+    series = d[1] if isinstance(d, list) and len(d) > 1 and d[1] else []
+    for x in series:                       # World Bank returns newest first
+        if x.get('value') is not None:
+            pct = float(x['value'])
+            label, color = classify_buffett(pct)
+            return {'ratio': pct, 'year': x.get('date', ''), 'label': label, 'color': color}
+    return {}
+
+
+def fetch_buffett() -> dict:
+    return parse_buffett(_get_json(BUFFETT_URL))
+
+
 def vix_mood(vix: float | None) -> tuple[str, str]:
     """Rough VIX interpretation (lower = calm, higher = fear)."""
     if vix is None:
@@ -113,8 +146,9 @@ def vix_mood(vix: float | None) -> tuple[str, str]:
 
 def gather() -> dict:
     """Fetch everything, tolerating individual source failures."""
-    out = {'cnn': None, 'crypto': None, 'vix': None, 'errors': []}
-    for key, fn in (('cnn', fetch_cnn_fng), ('crypto', fetch_crypto_fng), ('vix', fetch_vix)):
+    out = {'cnn': None, 'crypto': None, 'vix': None, 'buffett': None, 'errors': []}
+    for key, fn in (('cnn', fetch_cnn_fng), ('crypto', fetch_crypto_fng),
+                    ('vix', fetch_vix), ('buffett', fetch_buffett)):
         try:
             out[key] = fn()
         except Exception as exc:                      # noqa: BLE001

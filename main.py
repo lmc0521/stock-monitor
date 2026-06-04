@@ -1317,6 +1317,23 @@ class SentimentDialog(QDialog):
         note.setStyleSheet(f'color: {SUBTEXT}; font-size: 10px;')
         self._body.addWidget(note)
 
+    def _add_buffett(self, b):
+        self._body.addSpacing(12)
+        t = QLabel('Buffett Indicator — US market cap ÷ GDP')
+        t.setFont(QFont('Segoe UI', 12, QFont.Weight.Bold))
+        self._body.addWidget(t)
+        if not b:
+            self._add_note('unavailable right now.')
+            return
+        v = QLabel(f"{b['ratio']:.0f}%  —  {b['label']}")
+        v.setFont(QFont('Segoe UI', 16, QFont.Weight.Bold))
+        v.setStyleSheet(f"color: {b['color']};")
+        self._body.addWidget(v)
+        note = QLabel(f"Source: World Bank, {b['year']} (annual).  "
+                      "<90% cheap · ~100% fair · >150% richly valued.")
+        note.setStyleSheet(f'color: {SUBTEXT}; font-size: 10px;')
+        self._body.addWidget(note)
+
     # ── data ──
     def _refresh(self):
         if self._job and self._job.isRunning():
@@ -1344,6 +1361,7 @@ class SentimentDialog(QDialog):
             self._add_note('Crypto Fear & Greed unavailable right now.')
 
         self._add_vix(vix)
+        self._add_buffett(d.get('buffett'))
 
         errs = d.get('errors')
         self._status.setText('Updated.' if not errs
@@ -1457,7 +1475,7 @@ class ThirteenFDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle('13F Institutional Holdings')
-        self.resize(900, 640)
+        self.resize(1200, 660)
         self.setStyleSheet(parent.styleSheet() if parent else '')
         self._job = None
         self._build_ui()
@@ -1496,6 +1514,7 @@ class ThirteenFDialog(QDialog):
         self._header.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self._header)
 
+        mid = QHBoxLayout()
         self._table = QTableWidget(0, len(self.HEADERS))
         self._table.setHorizontalHeaderLabels(self.HEADERS)
         hh = self._table.horizontalHeader()
@@ -1504,7 +1523,15 @@ class ThirteenFDialog(QDialog):
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self._table.verticalHeader().setVisible(False)
-        layout.addWidget(self._table)
+        mid.addWidget(self._table, 3)
+
+        pie_box = QWidget()
+        pie_box.setFixedWidth(320)
+        self._pie_layout = QVBoxLayout(pie_box)
+        self._pie_layout.setContentsMargins(0, 0, 0, 0)
+        self._pie_canvas = None
+        mid.addWidget(pie_box, 0)
+        layout.addLayout(mid)
 
         self._status = QLabel('')
         self._status.setStyleSheet(f'color: {SUBTEXT}; font-size: 11px;')
@@ -1552,6 +1579,36 @@ class ThirteenFDialog(QDialog):
             self._cell(r, 5, f"{h['shares']:,}")
         extra = '' if d['positions'] <= self.MAX_ROWS else f' (showing top {self.MAX_ROWS})'
         self._status.setText(f"Loaded {len(rows)} positions{extra}.")
+        self._draw_pie(d['holdings'])
+
+    def _draw_pie(self, holdings, top_n: int = 10):
+        if self._pie_canvas:
+            self._pie_layout.removeWidget(self._pie_canvas)
+            self._pie_canvas.deleteLater()
+            self._pie_canvas = None
+        if not holdings:
+            return
+
+        top = holdings[:top_n]
+        labels = [h['issuer'][:16] for h in top]
+        values = [h['value'] for h in top]
+        others = sum(h['value'] for h in holdings[top_n:])
+        if others > 0:
+            labels.append('Others')
+            values.append(others)
+
+        fig = Figure(figsize=(3.1, 3.6), facecolor=DARK_BG)
+        ax = fig.add_subplot(111)
+        ax.pie(values, labels=labels, startangle=90, labeldistance=1.05,
+               textprops={'color': TEXT, 'fontsize': 7},
+               wedgeprops={'edgecolor': DARK_BG, 'linewidth': 0.8})
+        ax.set_title(f'Top {len(top)} by value', color=TEXT, fontsize=10)
+        ax.axis('equal')
+        fig.tight_layout()
+
+        self._pie_canvas = FigureCanvas(fig)
+        self._pie_layout.addWidget(self._pie_canvas)
+        self._pie_canvas.draw()
 
 
 # ── main window ──────────────────────────────────────────────────────────────
