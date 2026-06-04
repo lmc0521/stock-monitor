@@ -27,6 +27,7 @@ import llm
 import data
 import indicators as ta
 import sentiment
+import history
 
 def _app_dir() -> str:
     """Directory for read/write state — next to the .exe when frozen, else the source dir."""
@@ -92,7 +93,15 @@ def parse_portfolio_csv(path: str):
                 avg_cost = float(raw[2])
             except (IndexError, ValueError):
                 continue
-            holdings.append({'symbol': sym.upper(), 'shares': shares, 'avg_cost': avg_cost})
+            holding = {'symbol': sym.upper(), 'shares': shares, 'avg_cost': avg_cost}
+            # optional 4th column: buy date YYYY-MM-DD (for history reconstruction)
+            if len(raw) > 3 and raw[3].strip():
+                try:
+                    from datetime import datetime as _dt
+                    holding['date'] = _dt.strptime(raw[3].strip(), '%Y-%m-%d').date().isoformat()
+                except ValueError:
+                    pass
+            holdings.append(holding)
     return holdings, cash
 
 
@@ -292,6 +301,24 @@ class SentimentWorker(QThread):
 
     def run(self):
         self.ready.emit(sentiment.gather())
+
+
+class HistoryWorker(QThread):
+    """Builds the portfolio value-history series off the UI thread."""
+    ready = pyqtSignal(object, object)   # total Series, invested Series
+    error = pyqtSignal(str)
+
+    def __init__(self, holdings: list, cash: float):
+        super().__init__()
+        self.holdings = holdings
+        self.cash = cash
+
+    def run(self):
+        try:
+            total, invested = history.build_history(self.holdings, self.cash)
+            self.ready.emit(total, invested)
+        except Exception as exc:
+            self.error.emit(str(exc))
 
 
 class InsightsWorker(QThread):
@@ -570,9 +597,11 @@ class AddHoldingDialog(QDialog):
         self._sym.textEdited.connect(lambda _t: self._search_timer.start())
         self._shares = QLineEdit(); self._shares.setPlaceholderText('e.g. 10')
         self._cost   = QLineEdit(); self._cost.setPlaceholderText('e.g. 180.50')
+        self._date   = QLineEdit(); self._date.setPlaceholderText('YYYY-MM-DD (optional, for history)')
         form.addRow('Symbol', self._sym)
         form.addRow('Shares', self._shares)
         form.addRow('Avg cost', self._cost)
+        form.addRow('Buy date', self._date)
 
         # autocomplete (same Yahoo search as the watchlist)
         self._completer = QCompleter(self)
@@ -637,8 +666,21 @@ class AddHoldingDialog(QDialog):
             QMessageBox.warning(self, 'Invalid', 'Shares and avg cost must be numbers.')
             return
 
+        # optional buy date for history reconstruction
+        raw_date = self._date.text().strip()
+        buy_date = None
+        if raw_date:
+            try:
+                from datetime import datetime as _dt
+                buy_date = _dt.strptime(raw_date, '%Y-%m-%d').date().isoformat()
+            except ValueError:
+                QMessageBox.warning(self, 'Invalid', 'Buy date must be YYYY-MM-DD (or left blank).')
+                return
+
         # validate the symbol actually has market data before accepting
         self._pending = {'symbol': sym, 'shares': shares, 'avg_cost': cost}
+        if buy_date:
+            self._pending['date'] = buy_date
         self._ok.setEnabled(False)
         self._status.setText(f'Checking {sym} …')
         self._validate_job = PriceFetcher([sym])
@@ -847,6 +889,14 @@ class PortfolioDialog(QDialog):
         )
         self._summary.setStyleSheet(f'color: {col};')
         self._draw_pie(result)
+
+        # record today's value to the running history (only when prices are loaded)
+        if result['market_value'] > 0:
+            try:
+                history.record_snapshot(result['total_value'], result['market_value'],
+                                        result['cash'], result['invested_cost'])
+            except Exception:
+                pass
 
     def _draw_pie(self, result):
         """Render an allocation pie (by market value of priced holdings + cash)."""
@@ -1283,6 +1333,104 @@ class SentimentDialog(QDialog):
                              else 'Updated — some sources failed: ' + '; '.join(errs)[:140])
 
 
+# ── portfolio-history dialog ──────────────────────────────────────────────────
+
+class HistoryDialog(QDialog):
+    """Line chart of portfolio value over time (reconstructed + recorded)."""
+    def __init__(self, parent, holdings: list, cash: float):
+        super().__init__(parent)
+        self.setWindowTitle('Portfolio History')
+        self.resize(920, 580)
+        self.setStyleSheet(parent.styleSheet() if parent else '')
+        self._holdings = holdings
+        self._cash = cash
+        self._job = None
+        self._canvas = None
+        self._build_ui()
+        self._refresh()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        head = QHBoxLayout()
+        title = QLabel('Portfolio Value History')
+        title.setFont(QFont('Segoe UI', 13, QFont.Weight.Bold))
+        ref = QPushButton('↻ Refresh')
+        ref.clicked.connect(self._refresh)
+        head.addWidget(title); head.addStretch(); head.addWidget(ref)
+        layout.addLayout(head)
+
+        self._chart_holder = QVBoxLayout()
+        layout.addLayout(self._chart_holder, 1)
+
+        self._status = QLabel('')
+        self._status.setStyleSheet(f'color: {SUBTEXT}; font-size: 11px;')
+        layout.addWidget(self._status)
+        note = QLabel('Reconstructed from purchase dates + historical prices; daily '
+                      'snapshots are recorded going forward. Holdings without a buy '
+                      'date are assumed held over the past year.')
+        note.setWordWrap(True)
+        note.setStyleSheet(f'color: {SUBTEXT}; font-size: 10px;')
+        layout.addWidget(note)
+
+    def _refresh(self):
+        if not self._holdings:
+            self._status.setText('No holdings yet — add some in the Portfolio page.')
+            return
+        if self._job and self._job.isRunning():
+            return
+        self._status.setText('Building history …')
+        self._job = HistoryWorker(self._holdings, self._cash)
+        self._job.ready.connect(self._on_ready)
+        self._job.error.connect(lambda m: self._status.setText('Error: ' + m))
+        self._job.start()
+
+    def _on_ready(self, total, invested):
+        if total is None or len(total) == 0:
+            self._status.setText('Not enough price history to build a chart.')
+            return
+        self._draw(total, invested)
+        first, last = float(total.iloc[0]), float(total.iloc[-1])
+        ret = (last - first) / first * 100 if first else 0.0
+        self._status.setText(
+            f'{len(total)} days  |  {total.index[0].date()}: {first:,.0f}  →  '
+            f'now: {last:,.0f}   ({ret:+.2f}%)')
+
+    def _draw(self, total, invested):
+        if self._canvas:
+            self._chart_holder.removeWidget(self._canvas)
+            self._canvas.deleteLater()
+            self._canvas = None
+
+        fig = Figure(figsize=(9, 4.6), facecolor=DARK_BG)
+        ax = fig.add_subplot(111)
+        ax.set_facecolor('#0d0d1a')
+        x = total.index
+        ax.plot(x, total.values, color=UP_COLOR, lw=1.6, label='Portfolio value')
+        if invested is not None and len(invested):
+            inv = invested.reindex(x).ffill()
+            ax.plot(x, inv.values, color='#7e8aa2', lw=1.0, ls='--', label='Invested (cost basis)')
+            ax.fill_between(x, inv.values, total.values,
+                            where=(total.values >= inv.values),
+                            color=UP_COLOR, alpha=0.12, interpolate=True)
+            ax.fill_between(x, inv.values, total.values,
+                            where=(total.values < inv.values),
+                            color=DOWN_COLOR, alpha=0.12, interpolate=True)
+        ax.set_title('Portfolio Value Over Time', color=TEXT, fontsize=11)
+        ax.tick_params(colors=SUBTEXT)
+        for sp in ax.spines.values():
+            sp.set_color('#2a2a4a')
+        ax.grid(True, color='#2a2a4a', ls=':', lw=0.5)
+        leg = ax.legend(facecolor=PANEL_BG, edgecolor='#2a2a4a', fontsize=9)
+        for t in leg.get_texts():
+            t.set_color(TEXT)
+        fig.autofmt_xdate()
+        fig.tight_layout()
+
+        self._canvas = FigureCanvas(fig)
+        self._chart_holder.addWidget(self._canvas)
+        self._canvas.draw()
+
+
 # ── main window ──────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -1397,6 +1545,11 @@ class MainWindow(QMainWindow):
         pf_btn.setObjectName('AccentBtn')
         pf_btn.clicked.connect(self._open_portfolio)
         layout.addWidget(pf_btn)
+
+        hist_btn = QPushButton('📈 Portfolio History')
+        hist_btn.setObjectName('AccentBtn')
+        hist_btn.clicked.connect(self._open_history)
+        layout.addWidget(hist_btn)
 
         ai_btn = QPushButton('💡 AI Insights')
         ai_btn.setObjectName('AccentBtn')
@@ -1607,6 +1760,10 @@ class MainWindow(QMainWindow):
     # ── portfolio ──
     def _open_portfolio(self):
         PortfolioDialog(self).exec()
+
+    def _open_history(self):
+        holdings, cash = load_portfolio()
+        HistoryDialog(self, holdings, cash).exec()
 
     # ── AI insights ──
     def _open_insights(self):

@@ -83,7 +83,36 @@ def get_last_closes(symbol: str, *, days: int = 5, fetcher=None, now=None):
     return df['Close'].dropna()
 
 
+# (symbol, start) -> (timestamp, dataframe), for date-range history
+_SINCE_CACHE: dict[tuple, tuple[float, object]] = {}
+
+
+def get_history_since(symbol: str, start: str, *, ttl: int = 900, fetcher=None, now=None):
+    """Daily OHLCV from `start` (YYYY-MM-DD) to today, cached by (symbol, start)."""
+    fetcher = fetcher or (lambda s, st: yf.Ticker(s).history(start=st, interval='1d'))
+    now = now or time.time
+    key = (symbol, str(start))
+
+    with _LOCK:
+        cached = _SINCE_CACHE.get(key)
+    if cached and (now() - cached[0]) < ttl:
+        return cached[1]
+
+    try:
+        df = _with_retry(lambda: fetcher(symbol, start))
+    except Exception:
+        if cached:
+            return cached[1]
+        raise
+
+    if df is not None and not getattr(df, 'empty', True):
+        with _LOCK:
+            _SINCE_CACHE[key] = (now(), df)
+    return df
+
+
 def clear_cache():
     """Drop all cached data (used by tests and a manual hard-refresh)."""
     with _LOCK:
         _HISTORY_CACHE.clear()
+        _SINCE_CACHE.clear()

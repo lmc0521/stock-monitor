@@ -17,8 +17,14 @@ inspector, portfolio P&L tracking, and Claude-powered, portfolio-aware analysis.
   the price under your cursor.
 - **Portfolio / P&L** — import holdings + cash from CSV or add them via a form;
   see per-position and total unrealized P&L. Persisted to `portfolio.json`.
+- **Portfolio History** — reconstructs your portfolio's value curve from each
+  holding's purchase date + historical prices ("from start to now"), and records
+  daily snapshots to `history.json` going forward. Shows value vs. cost basis.
+- **Market Sentiment** — CNN Fear & Greed (+ its 7 components), the crypto
+  Fear & Greed index, and the VIX, on color-coded gauges.
 - **AI Insights** — sends your portfolio + watchlist snapshot to Claude for
-  portfolio-aware analysis (concentration, risks, ideas to research).
+  portfolio-aware analysis with **live web search** (current news, fundamentals,
+  volatility), citing sources.
 
 ## Requirements
 
@@ -105,7 +111,10 @@ See `sample_portfolio.csv` for a ready-made example.
 |---|---|
 | `main.py` | The PyQt6 app: windows, dialogs, workers, charting |
 | `data.py` | Cached market-data layer (yfinance + TTL cache + retry) |
-| `llm.py` | Claude prompt builders + streaming analysis |
+| `indicators.py` | RSI / MACD / Bollinger / SMA math |
+| `sentiment.py` | Fear & Greed + VIX sentiment data |
+| `history.py` | Portfolio value reconstruction + daily snapshots |
+| `llm.py` | Claude prompt builders + streaming analysis (with web search) |
 | `test_functions.py` | Headless unit tests (persistence, EMA, P&L, prompts, cache) |
 | `smoke_test.py` | Launches the GUI, loads a chart, screenshots it |
 | `portfolio_smoke.py` | Renders the Portfolio dialog offline and screenshots it |

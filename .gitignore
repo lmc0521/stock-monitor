@@ -9,6 +9,7 @@ venv/
 watchlist.json
 portfolio.json
 alerts.json
+history.json
 
 # Test / smoke-test artifacts
 smoke_test.png

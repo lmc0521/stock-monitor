@@ -388,6 +388,68 @@ def test_sentiment():
     check('high VIX = High Fear', sent.vix_mood(35)[0] == 'High Fear')
 
 
+# ── 12. portfolio history reconstruction (offline) ───────────────────────────
+def test_history():
+    print('\n[12] Portfolio history (offline)')
+    import history as hist
+
+    idx = pd.to_datetime(['2025-01-01', '2025-01-02', '2025-01-03', '2025-01-04'])
+    closes = {
+        'AAA': pd.Series([100.0, 110.0, 120.0, 130.0], index=idx),
+        'BBB': pd.Series([10.0, 10.0, 10.0, 10.0], index=idx),
+    }
+    holdings = [
+        {'symbol': 'AAA', 'shares': 2, 'avg_cost': 90.0},                        # no date -> all dates
+        {'symbol': 'BBB', 'shares': 5, 'avg_cost': 8.0, 'date': '2025-01-03'},   # starts 01-03
+    ]
+    total = hist.reconstruct_series(holdings, closes, cash=50.0)
+
+    # 01-01: only AAA (2*100) + cash 50 = 250
+    check('value before BBB purchase = 250', abs(total.loc[idx[0]] - 250.0) < 1e-9,
+          detail=f'{total.loc[idx[0]]:.1f}')
+    # 01-03: AAA 2*120 + BBB 5*10 + cash 50 = 240+50+50 = 340
+    check('value after BBB purchase = 340', abs(total.loc[idx[2]] - 340.0) < 1e-9,
+          detail=f'{total.loc[idx[2]]:.1f}')
+
+    # invested baseline: before BBB = AAA cost 180 + cash 50 = 230; after += 40 = 270
+    inv = hist.invested_series(holdings, total.index, cash=50.0)
+    check('invested before BBB = 230', abs(inv.loc[idx[0]] - 230.0) < 1e-9, detail=f'{inv.loc[idx[0]]:.1f}')
+    check('invested after BBB = 270', abs(inv.loc[idx[2]] - 270.0) < 1e-9, detail=f'{inv.loc[idx[2]]:.1f}')
+
+    # missing-price symbol is skipped, not crashing
+    total2 = hist.reconstruct_series(
+        [{'symbol': 'ZZZ', 'shares': 1, 'avg_cost': 1.0}], {}, cash=0.0)
+    check('no price data -> empty series', len(total2) == 0)
+
+    # snapshot round-trip via a temp history file
+    import tempfile, os as _os
+    fd, path = tempfile.mkstemp(suffix='.json'); _os.close(fd)
+    orig = hist.HISTORY_FILE
+    try:
+        hist.HISTORY_FILE = path
+        hist.record_snapshot(1000, 800, 200, 700, when='2025-01-01')
+        hist.record_snapshot(1100, 900, 200, 700, when='2025-01-02')
+        hist.record_snapshot(1150, 950, 200, 700, when='2025-01-02')   # same day -> replace
+        snaps = hist.load_snapshots()
+        check('snapshots dedup per day', len(snaps) == 2, detail=str(len(snaps)))
+        check('latest same-day snapshot wins', snaps[-1]['total_value'] == 1150)
+    finally:
+        hist.HISTORY_FILE = orig
+        _os.remove(path)
+
+    # CSV with a date column parses the date
+    content = 'symbol,shares,avg_cost,date\nAAPL,10,150,2025-02-03\nMSFT,5,300,\n'
+    fd, cpath = tempfile.mkstemp(suffix='.csv'); _os.close(fd)
+    with open(cpath, 'w', newline='') as f:
+        f.write(content)
+    try:
+        hh, _cash = main.parse_portfolio_csv(cpath)
+        check('CSV date column parsed', hh[0].get('date') == '2025-02-03', detail=str(hh[0]))
+        check('CSV missing date omitted', 'date' not in hh[1])
+    finally:
+        _os.remove(cpath)
+
+
 def main_run():
     QApplication(sys.argv)   # needed so QObject/QThread can be constructed
     print('=' * 60)
@@ -403,6 +465,7 @@ def main_run():
     test_alerts()
     test_indicators()
     test_sentiment()
+    test_history()
     test_quotes()
     test_search()
 
