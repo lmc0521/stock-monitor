@@ -60,6 +60,64 @@ def reconstruct_series(holdings: list, closes_by_symbol: dict, cash: float = 0.0
     return total.dropna()
 
 
+def reconstruct_from_ledger(transactions: list, closes_by_symbol: dict, cash: float = 0.0):
+    """
+    Accurate value curve from a transaction ledger: shares held on each date
+    reflect actual buys/sells over time (not a fixed current quantity).
+    """
+    trades = [t for t in transactions if t.get('type') in ('buy', 'sell')]
+    cols = {}
+    for sym in {t['symbol'] for t in trades}:
+        closes = closes_by_symbol.get(sym)
+        if closes is None or len(closes) == 0:
+            continue
+        changes = pd.Series(0.0, index=closes.index)
+        for t in trades:
+            if t['symbol'] != sym:
+                continue
+            delta = float(t['shares']) * (1 if t['type'] == 'buy' else -1)
+            pos = closes.index.searchsorted(pd.Timestamp(t['date']))
+            if pos < len(closes.index):
+                changes.iloc[pos] += delta
+        shares = changes.cumsum().clip(lower=0)        # never negative
+        cols[sym] = shares * closes.astype(float)
+
+    if not cols:
+        return pd.Series(dtype=float)
+    total = pd.DataFrame(cols).fillna(0.0).sum(axis=1) + cash
+    # trim leading dates before any position existed
+    held = total[total > cash + 1e-9]
+    if len(held):
+        total = total[total.index >= held.index[0]]
+    return total
+
+
+def invested_from_ledger(transactions: list, index, cash: float = 0.0):
+    """Running cost basis (average-cost) over `index`, + cash."""
+    if index is None or len(index) == 0:
+        return pd.Series(dtype=float)
+    by: dict[str, dict] = {}
+    points = {}
+    for t in sorted([x for x in transactions if x.get('type') in ('buy', 'sell')],
+                    key=lambda x: x.get('date', '')):
+        p = by.setdefault(t['symbol'], {'shares': 0.0, 'cost': 0.0})
+        if t['type'] == 'buy':
+            p['shares'] += float(t['shares'])
+            p['cost'] += float(t['shares']) * float(t['price'])
+        else:
+            sell_sh = min(float(t['shares']), p['shares'])
+            avg = p['cost'] / p['shares'] if p['shares'] > 1e-12 else 0.0
+            p['cost'] -= sell_sh * avg
+            p['shares'] -= sell_sh
+        points[pd.Timestamp(t['date'])] = sum(x['cost'] for x in by.values())
+
+    if not points:
+        return pd.Series(cash, index=index, dtype=float)
+    ser = pd.Series(points).sort_index()
+    ser = ser[~ser.index.duplicated(keep='last')]
+    return ser.reindex(index, method='ffill').fillna(0.0) + cash
+
+
 def invested_series(holdings: list, index, cash: float = 0.0):
     """Cost-basis baseline over `index`: sum of each holding's cost once purchased, + cash."""
     if index is None or len(index) == 0:
@@ -137,7 +195,31 @@ def build_history(holdings: list, cash: float):
     """
     Return (total_value_series, invested_series) for the portfolio, merging the
     reconstructed curve with any recorded daily snapshots (snapshots win per date).
+
+    If a transaction ledger exists, reconstruct accurately from actual buys/sells
+    over time; otherwise fall back to current holdings + purchase dates.
     """
+    import ledger
+    txns = ledger.load_transactions()
+    trades = [t for t in txns if t.get('type') in ('buy', 'sell')]
+
+    if trades:
+        start = min(t['date'] for t in trades if t.get('date'))
+        symbols = sorted({t['symbol'] for t in trades})
+        closes = fetch_closes(symbols, start)
+        total = reconstruct_from_ledger(txns, closes, cash)
+        if total is None or len(total) == 0:
+            return pd.Series(dtype=float), pd.Series(dtype=float)
+        snaps = load_snapshots()
+        if snaps:
+            for s in snaps:
+                try:
+                    total.loc[pd.Timestamp(s['date'])] = float(s['total_value'])
+                except Exception:
+                    pass
+            total = total.sort_index()
+        return total, invested_from_ledger(txns, total.index, cash)
+
     if not holdings:
         return pd.Series(dtype=float), pd.Series(dtype=float)
 

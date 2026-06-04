@@ -29,6 +29,7 @@ import indicators as ta
 import sentiment
 import history
 import thirteenf
+import ledger
 
 def _app_dir() -> str:
     """Directory for read/write state — next to the .exe when frozen, else the source dir."""
@@ -1387,6 +1388,143 @@ class SentimentDialog(QDialog):
                              else 'Updated — some sources failed: ' + '; '.join(errs)[:140])
 
 
+# ── transaction ledger dialog ─────────────────────────────────────────────────
+
+class LedgerDialog(QDialog):
+    HEADERS = ['Date', 'Symbol', 'Type', 'Shares', 'Price / Amount']
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Transactions / Ledger')
+        self.resize(720, 560)
+        self.setStyleSheet(parent.styleSheet() if parent else '')
+        self._txns = ledger.load_transactions()
+        self._build_ui()
+        self._render()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        form = QHBoxLayout()
+        from datetime import date as _date
+        self._date = QLineEdit(); self._date.setPlaceholderText('YYYY-MM-DD')
+        self._date.setText(_date.today().isoformat()); self._date.setFixedWidth(110)
+        self._sym = QLineEdit(); self._sym.setPlaceholderText('Symbol'); self._sym.setFixedWidth(90)
+        self._type = QComboBox(); self._type.addItems(['buy', 'sell', 'dividend'])
+        self._shares = QLineEdit(); self._shares.setPlaceholderText('Shares'); self._shares.setFixedWidth(80)
+        self._price = QLineEdit(); self._price.setPlaceholderText('Price / Amount'); self._price.setFixedWidth(110)
+        add = QPushButton('+ Add'); add.setObjectName('AccentBtn'); add.clicked.connect(self._add)
+        for w in (self._date, self._sym, self._type, self._shares, self._price, add):
+            form.addWidget(w)
+        layout.addLayout(form)
+
+        self._table = QTableWidget(0, len(self.HEADERS))
+        self._table.setHorizontalHeaderLabels(self.HEADERS)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.verticalHeader().setVisible(False)
+        layout.addWidget(self._table)
+
+        rm = QPushButton('Remove selected')
+        rm.clicked.connect(self._remove)
+        layout.addWidget(rm)
+
+        self._summary = QLabel('')
+        self._summary.setFont(QFont('Segoe UI', 11, QFont.Weight.Bold))
+        self._summary.setWordWrap(True)
+        layout.addWidget(self._summary)
+
+        note = QLabel('Buys/sells/dividends here are the source of truth: open '
+                      'positions are synced to the Portfolio page, and the History '
+                      'chart reconstructs from them. Realized P&L uses average cost.')
+        note.setWordWrap(True)
+        note.setStyleSheet(f'color: {SUBTEXT}; font-size: 10px;')
+        layout.addWidget(note)
+
+    def _add(self):
+        from datetime import datetime as _dt
+        raw_date = self._date.text().strip()
+        try:
+            date = _dt.strptime(raw_date, '%Y-%m-%d').date().isoformat()
+        except ValueError:
+            QMessageBox.warning(self, 'Invalid', 'Date must be YYYY-MM-DD.')
+            return
+        sym = self._sym.text().strip().upper()
+        if not sym:
+            QMessageBox.warning(self, 'Invalid', 'Symbol is required.')
+            return
+        typ = self._type.currentText()
+        try:
+            price = float(self._price.text())
+        except ValueError:
+            QMessageBox.warning(self, 'Invalid', 'Price / Amount must be a number.')
+            return
+
+        if typ == 'dividend':
+            txn = {'date': date, 'symbol': sym, 'type': 'dividend', 'amount': price}
+        else:
+            try:
+                shares = float(self._shares.text())
+            except ValueError:
+                QMessageBox.warning(self, 'Invalid', 'Shares must be a number.')
+                return
+            if shares <= 0:
+                QMessageBox.warning(self, 'Invalid', 'Shares must be positive.')
+                return
+            txn = {'date': date, 'symbol': sym, 'type': typ, 'shares': shares, 'price': price}
+
+        self._txns.append(txn)
+        self._commit()
+        self._sym.clear(); self._shares.clear(); self._price.clear()
+
+    def _remove(self):
+        rows = self._table.selectionModel().selectedRows()
+        if not rows:
+            return
+        i = rows[0].row()
+        if 0 <= i < len(self._txns):
+            del self._txns[i]
+            self._commit()
+
+    def _commit(self):
+        ledger.save_transactions(self._txns)
+        self._txns = ledger.load_transactions()         # canonical sorted order
+        # sync open positions into the portfolio (preserve existing cash)
+        _, cash = load_portfolio()
+        save_portfolio(ledger.current_holdings(self._txns), cash)
+        self._render()
+
+    def _render(self):
+        self._table.setRowCount(len(self._txns))
+        for r, t in enumerate(self._txns):
+            is_div = t.get('type') == 'dividend'
+            cells = [
+                t.get('date', ''),
+                t.get('symbol', ''),
+                t.get('type', ''),
+                '' if is_div else f"{float(t.get('shares', 0)):g}",
+                f"{float(t.get('amount' if is_div else 'price', 0)):,.2f}",
+            ]
+            for c, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | (
+                    Qt.AlignmentFlag.AlignLeft if c < 3 else Qt.AlignmentFlag.AlignRight))
+                if c == 2 and t.get('type') in ('buy', 'sell', 'dividend'):
+                    item.setForeground(QColor({'buy': UP_COLOR, 'sell': DOWN_COLOR,
+                                               'dividend': '#c9a227'}[t['type']]))
+                self._table.setItem(r, c, item)
+
+        s = ledger.summary(self._txns)
+        color = UP_COLOR if s['realized'] >= 0 else DOWN_COLOR
+        self._summary.setText(
+            f"Realized P&L: {s['realized']:+,.2f}    |    "
+            f"Dividends: {s['dividends']:,.2f}    |    "
+            f"Open positions: {s['open_positions']}")
+        self._summary.setStyleSheet(f'color: {color};')
+
+
 # ── portfolio-history dialog ──────────────────────────────────────────────────
 
 class HistoryDialog(QDialog):
@@ -1841,6 +1979,11 @@ class MainWindow(QMainWindow):
         pf_btn.clicked.connect(self._open_portfolio)
         layout.addWidget(pf_btn)
 
+        ledger_btn = QPushButton('🧾 Transactions')
+        ledger_btn.setObjectName('AccentBtn')
+        ledger_btn.clicked.connect(self._open_ledger)
+        layout.addWidget(ledger_btn)
+
         hist_btn = QPushButton('📈 Portfolio History')
         hist_btn.setObjectName('AccentBtn')
         hist_btn.clicked.connect(self._open_history)
@@ -2065,6 +2208,9 @@ class MainWindow(QMainWindow):
     # ── portfolio ──
     def _open_portfolio(self):
         PortfolioDialog(self).exec()
+
+    def _open_ledger(self):
+        LedgerDialog(self).exec()
 
     def _open_history(self):
         holdings, cash = load_portfolio()

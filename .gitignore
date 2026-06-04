@@ -10,6 +10,7 @@ watchlist.json
 portfolio.json
 alerts.json
 history.json
+transactions.json
 
 # Test / smoke-test artifacts
 smoke_test.png

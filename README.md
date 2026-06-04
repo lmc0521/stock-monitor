@@ -17,9 +17,12 @@ inspector, portfolio P&L tracking, and Claude-powered, portfolio-aware analysis.
   the price under your cursor.
 - **Portfolio / P&L** — import holdings + cash from CSV or add them via a form;
   see per-position and total unrealized P&L. Persisted to `portfolio.json`.
-- **Portfolio History** — reconstructs your portfolio's value curve from each
-  holding's purchase date + historical prices ("from start to now"), and records
-  daily snapshots to `history.json` going forward. Shows value vs. cost basis.
+- **Transactions / Ledger** — record buys, sells, and dividends. Open positions
+  sync to the Portfolio page; realized P&L (average-cost) and dividends are
+  tracked, and the History chart reconstructs accurately from actual trades.
+- **Portfolio History** — reconstructs your portfolio's value curve from your
+  transaction ledger (or purchase dates) + historical prices ("from start to
+  now"), and records daily snapshots going forward. Shows value vs. cost basis.
 - **Market Sentiment** — CNN Fear & Greed (+ its 7 components), the crypto
   Fear & Greed index, and the VIX, on color-coded gauges.
 - **13F Holdings** — browse what famous institutional managers (Berkshire,
@@ -117,6 +120,7 @@ See `sample_portfolio.csv` for a ready-made example.
 | `data.py` | Cached market-data layer (yfinance + TTL cache + retry) |
 | `indicators.py` | RSI / MACD / Bollinger / SMA math |
 | `sentiment.py` | Fear & Greed + VIX sentiment data |
+| `ledger.py` | Transaction ledger → positions, realized P&L, dividends |
 | `history.py` | Portfolio value reconstruction + daily snapshots |
 | `thirteenf.py` | SEC EDGAR 13F holdings fetch + parse |
 | `llm.py` | Claude prompt builders + streaming analysis (with web search) |

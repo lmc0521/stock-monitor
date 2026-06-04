@@ -522,6 +522,62 @@ def test_13f():
     check('find_latest_13f returns the 13F-HR', latest[0] == 'a-1' and latest[1] == '2026-03-31')
 
 
+# ── 14. transaction ledger (offline) ─────────────────────────────────────────
+def test_ledger():
+    print('\n[14] Transaction ledger (offline)')
+    import ledger as L
+
+    txns = [
+        {'date': '2025-01-01', 'symbol': 'AAA', 'type': 'buy',  'shares': 10, 'price': 100.0},
+        {'date': '2025-02-01', 'symbol': 'AAA', 'type': 'buy',  'shares': 10, 'price': 120.0},  # avg 110
+        {'date': '2025-03-01', 'symbol': 'AAA', 'type': 'sell', 'shares': 5,  'price': 150.0},   # +200 realized
+        {'date': '2025-03-15', 'symbol': 'AAA', 'type': 'dividend', 'amount': 25.0},
+        {'date': '2025-04-01', 'symbol': 'BBB', 'type': 'buy',  'shares': 4,  'price': 50.0},
+    ]
+    pos = L.positions(txns)
+    check('AAA net shares = 15', abs(pos['AAA']['shares'] - 15) < 1e-9, detail=str(pos['AAA']['shares']))
+    check('AAA avg cost stays 110', abs(pos['AAA']['avg_cost'] - 110.0) < 1e-9,
+          detail=f"{pos['AAA']['avg_cost']:.2f}")
+    check('AAA realized = +200 (5 x (150-110))', abs(pos['AAA']['realized'] - 200.0) < 1e-9,
+          detail=f"{pos['AAA']['realized']:.2f}")
+    check('AAA dividends = 25', abs(pos['AAA']['dividends'] - 25.0) < 1e-9)
+
+    hold = L.current_holdings(txns)
+    syms = {h['symbol']: h for h in hold}
+    check('current holdings has AAA 15 @ 110 and BBB 4 @ 50',
+          abs(syms['AAA']['shares'] - 15) < 1e-9 and abs(syms['AAA']['avg_cost'] - 110) < 1e-9
+          and abs(syms['BBB']['shares'] - 4) < 1e-9, detail=str(hold))
+
+    s = L.summary(txns)
+    check('total realized = 200', abs(s['realized'] - 200.0) < 1e-9)
+    check('total dividends = 25', abs(s['dividends'] - 25.0) < 1e-9)
+    check('open positions = 2', s['open_positions'] == 2)
+
+    # oversell is capped (no negative shares)
+    over = L.positions([
+        {'date': '2025-01-01', 'symbol': 'X', 'type': 'buy',  'shares': 3, 'price': 10.0},
+        {'date': '2025-02-01', 'symbol': 'X', 'type': 'sell', 'shares': 9, 'price': 12.0},
+    ])
+    check('oversell capped at held shares', abs(over['X']['shares']) < 1e-9, detail=str(over['X']['shares']))
+
+    # ledger-based history reflects adds/trims over time
+    import history as hist
+    idx = pd.to_datetime(['2025-01-01', '2025-02-01', '2025-03-01'])
+    closes = {'AAA': pd.Series([100.0, 100.0, 100.0], index=idx)}
+    tl = [
+        {'date': '2025-01-01', 'symbol': 'AAA', 'type': 'buy',  'shares': 10, 'price': 100},
+        {'date': '2025-02-01', 'symbol': 'AAA', 'type': 'buy',  'shares': 10, 'price': 100},
+        {'date': '2025-03-01', 'symbol': 'AAA', 'type': 'sell', 'shares': 5,  'price': 100},
+    ]
+    series = hist.reconstruct_from_ledger(tl, closes, cash=0.0)
+    check('ledger history: 10sh@100 on day1 = 1000', abs(series.loc[idx[0]] - 1000) < 1e-9,
+          detail=str(series.loc[idx[0]]))
+    check('ledger history: 20sh on day2 = 2000', abs(series.loc[idx[1]] - 2000) < 1e-9,
+          detail=str(series.loc[idx[1]]))
+    check('ledger history: 15sh after sell = 1500', abs(series.loc[idx[2]] - 1500) < 1e-9,
+          detail=str(series.loc[idx[2]]))
+
+
 def main_run():
     QApplication(sys.argv)   # needed so QObject/QThread can be constructed
     print('=' * 60)
@@ -539,6 +595,7 @@ def main_run():
     test_sentiment()
     test_history()
     test_13f()
+    test_ledger()
     test_quotes()
     test_search()
 
