@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QListWidget, QListWidgetItem, QLineEdit, QLabel,
     QMessageBox, QSizePolicy, QFrame, QCompleter, QDialog, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QFileDialog, QTextEdit,
-    QFormLayout, QInputDialog, QComboBox, QProgressBar, QScrollArea
+    QFormLayout, QInputDialog, QComboBox, QProgressBar, QScrollArea, QStackedWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QStringListModel, QTimer
 from PyQt6.QtGui import QFont, QColor
@@ -622,7 +622,7 @@ class AddHoldingDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle('Add holding')
-        self.setStyleSheet(parent.styleSheet() if parent else '')
+        self.setStyleSheet(parent.window().styleSheet() if parent else '')
         self.result_holding = None
         self._sugg_map = {}
         self._search_job = None
@@ -739,25 +739,25 @@ class AddHoldingDialog(QDialog):
                 "a suggestion from the list.")
 
 
-class PortfolioDialog(QDialog):
+class PortfolioPage(QWidget):
     HEADERS = ['Symbol', 'Shares', 'Avg Cost', 'Price',
                'Mkt Value', 'Cost', 'P&L', 'P&L %']
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('Portfolio / P&L')
-        self.resize(1140, 520)
-
-        self._holdings, self._cash = load_portfolio()
+        self._holdings, self._cash = [], 0.0
         self._prices = {}
         self._fetcher = None
-
         self._build_ui()
+
+    def on_show(self):
+        self._holdings, self._cash = load_portfolio()
         if self._holdings:
             self._refresh_prices()
         else:
-            self._status.setText('No portfolio loaded — click "Import CSV…" '
-                                 '(columns: symbol, shares, avg_cost; use CASH for cash).')
+            self._render()
+            self._status.setText('No holdings yet — add them in Transactions, '
+                                 'use "+ Add holding", or "Import CSV…".')
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -975,7 +975,7 @@ class PortfolioDialog(QDialog):
 
 # ── AI insights dialog ────────────────────────────────────────────────────────
 
-class InsightsDialog(QDialog):
+class InsightsPage(QWidget):
     PRESETS = [
         ('Analyze my portfolio',  'Analyze my portfolio: concentration, diversification, and the biggest risks.'),
         ('Where am I overexposed?', 'Which positions or themes am I overexposed to, and how would I reduce that risk?'),
@@ -983,20 +983,20 @@ class InsightsDialog(QDialog):
         ('Review my losers',       'Review my losing positions. For each, lay out the case to hold vs. cut.'),
     ]
 
-    def __init__(self, parent, holdings: list, cash: float, watchlist: list):
+    def __init__(self, parent=None, main=None):
         super().__init__(parent)
-        self.setWindowTitle('AI Insights (portfolio-aware)')
-        self.resize(720, 640)
-        self.setStyleSheet(parent.styleSheet() if parent else '')
-
-        self._holdings  = holdings
-        self._cash      = cash
-        self._watchlist = watchlist
+        self._main = main
+        self._holdings  = []
+        self._cash      = 0.0
+        self._watchlist = []
         self._prices    = {}
         self._price_job = None
         self._insight_job = None
-
         self._build_ui()
+
+    def on_show(self):
+        self._holdings, self._cash = load_portfolio()
+        self._watchlist = list(self._main._watchlist) if self._main else []
         self._fetch_prices()
 
     def _build_ui(self):
@@ -1121,7 +1121,7 @@ class AlertsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle('Price Alerts')
         self.resize(560, 460)
-        self.setStyleSheet(parent.styleSheet() if parent else '')
+        self.setStyleSheet(parent.window().styleSheet() if parent else '')
         self._alerts = alerts          # shared list (mutated in place)
         self._watchlist = watchlist
         self._on_change = on_change
@@ -1235,16 +1235,18 @@ class AlertsDialog(QDialog):
 
 # ── market-sentiment dialog ───────────────────────────────────────────────────
 
-class SentimentDialog(QDialog):
+class SentimentPage(QWidget):
     """Investor-emotion indices: CNN Fear & Greed (+components), crypto F&G, VIX."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('Market Sentiment')
-        self.resize(580, 720)
-        self.setStyleSheet(parent.styleSheet() if parent else '')
         self._job = None
+        self._loaded = False
         self._build_ui()
-        self._refresh()
+
+    def on_show(self):
+        if not self._loaded:
+            self._loaded = True
+            self._refresh()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -1390,16 +1392,16 @@ class SentimentDialog(QDialog):
 
 # ── transaction ledger dialog ─────────────────────────────────────────────────
 
-class LedgerDialog(QDialog):
+class LedgerPage(QWidget):
     HEADERS = ['Date', 'Symbol', 'Type', 'Shares', 'Price / Amount']
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('Transactions / Ledger')
-        self.resize(720, 560)
-        self.setStyleSheet(parent.styleSheet() if parent else '')
-        self._txns = ledger.load_transactions()
+        self._txns = []
         self._build_ui()
+
+    def on_show(self):
+        self._txns = ledger.load_transactions()
         self._render()
 
     def _build_ui(self):
@@ -1527,18 +1529,18 @@ class LedgerDialog(QDialog):
 
 # ── portfolio-history dialog ──────────────────────────────────────────────────
 
-class HistoryDialog(QDialog):
+class HistoryPage(QWidget):
     """Line chart of portfolio value over time (reconstructed + recorded)."""
-    def __init__(self, parent, holdings: list, cash: float):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('Portfolio History')
-        self.resize(920, 580)
-        self.setStyleSheet(parent.styleSheet() if parent else '')
-        self._holdings = holdings
-        self._cash = cash
+        self._holdings = []
+        self._cash = 0.0
         self._job = None
         self._canvas = None
         self._build_ui()
+
+    def on_show(self):
+        self._holdings, self._cash = load_portfolio()
         self._refresh()
 
     def _build_ui(self):
@@ -1625,18 +1627,20 @@ class HistoryDialog(QDialog):
 
 # ── 13F holdings dialog ───────────────────────────────────────────────────────
 
-class ThirteenFDialog(QDialog):
+class ThirteenFPage(QWidget):
     HEADERS = ['#', 'Issuer', 'Class', 'Value', '% Port', 'Shares']
     MAX_ROWS = 100
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('13F Institutional Holdings')
-        self.resize(1200, 660)
-        self.setStyleSheet(parent.styleSheet() if parent else '')
         self._job = None
+        self._loaded = False
         self._build_ui()
-        self._load()                 # auto-load the first preset
+
+    def on_show(self):
+        if not self._loaded:
+            self._loaded = True
+            self._load()             # auto-load the first preset on first view
 
     @staticmethod
     def _money(v: float) -> str:
@@ -1770,7 +1774,7 @@ class ThirteenFDialog(QDialog):
 
 # ── firm market-outlook dialog ────────────────────────────────────────────────
 
-class StrategyDialog(QDialog):
+class StrategyPage(QWidget):
     FIRMS = [
         'BlackRock', 'JPMorgan Asset Management', 'Goldman Sachs',
         'Morgan Stanley', 'Vanguard', 'Fidelity', 'UBS',
@@ -1779,11 +1783,11 @@ class StrategyDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('Firm Market Outlook')
-        self.resize(740, 640)
-        self.setStyleSheet(parent.styleSheet() if parent else '')
         self._job = None
         self._build_ui()
+
+    def on_show(self):
+        pass            # nothing to fetch until the user picks a firm
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -1886,6 +1890,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._apply_theme()
+        self._nav_btns['chart'].setChecked(True)   # start on the chart page
         self._refresh_list()
         self._refresh_quotes()
 
@@ -1974,60 +1979,79 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(ref_btn)
         layout.addLayout(btn_row)
 
-        pf_btn = QPushButton('📊 Portfolio / P&L')
-        pf_btn.setObjectName('AccentBtn')
-        pf_btn.clicked.connect(self._open_portfolio)
-        layout.addWidget(pf_btn)
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setObjectName('Separator')
+        layout.addWidget(sep2)
 
-        ledger_btn = QPushButton('🧾 Transactions')
-        ledger_btn.setObjectName('AccentBtn')
-        ledger_btn.clicked.connect(self._open_ledger)
-        layout.addWidget(ledger_btn)
+        # navigation — these switch the embedded page on the right
+        nav = [
+            ('📈 Chart',             'chart'),
+            ('📊 Portfolio / P&L',   'portfolio'),
+            ('🧾 Transactions',      'ledger'),
+            ('🕒 Portfolio History', 'history'),
+            ('💡 AI Insights',       'insights'),
+            ('😱 Market Sentiment',  'sentiment'),
+            ('🏦 13F Holdings',      'f13'),
+            ('🏛 Firm Outlook',      'strategy'),
+        ]
+        self._nav_btns = {}
+        for label, key in nav:
+            btn = QPushButton(label)
+            btn.setObjectName('NavBtn')
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda _, k=key: self._show_page(k))
+            layout.addWidget(btn)
+            self._nav_btns[key] = btn
 
-        hist_btn = QPushButton('📈 Portfolio History')
-        hist_btn.setObjectName('AccentBtn')
-        hist_btn.clicked.connect(self._open_history)
-        layout.addWidget(hist_btn)
-
-        ai_btn = QPushButton('💡 AI Insights')
-        ai_btn.setObjectName('AccentBtn')
-        ai_btn.clicked.connect(self._open_insights)
-        layout.addWidget(ai_btn)
-
+        # alerts stays a pop-up (its job is to interrupt you when one fires)
         alert_btn = QPushButton('🔔 Price Alerts')
         alert_btn.setObjectName('AccentBtn')
         alert_btn.clicked.connect(self._open_alerts)
         layout.addWidget(alert_btn)
 
-        mood_btn = QPushButton('😱 Market Sentiment')
-        mood_btn.setObjectName('AccentBtn')
-        mood_btn.clicked.connect(self._open_sentiment)
-        layout.addWidget(mood_btn)
-
-        f13_btn = QPushButton('🏦 13F Holdings')
-        f13_btn.setObjectName('AccentBtn')
-        f13_btn.clicked.connect(self._open_13f)
-        layout.addWidget(f13_btn)
-
-        strat_btn = QPushButton('🏛 Firm Outlook')
-        strat_btn.setObjectName('AccentBtn')
-        strat_btn.clicked.connect(self._open_strategy)
-        layout.addWidget(strat_btn)
-
         return panel
 
     def _build_right_panel(self) -> QWidget:
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-        layout.addLayout(self._build_period_bar())
+        self._stack = QStackedWidget()
+
+        # page 0: the chart view
+        chart_page = QWidget()
+        cl = QVBoxLayout(chart_page)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(6)
+        cl.addLayout(self._build_period_bar())
         self._chart = ChartPanel()
-        layout.addWidget(self._chart)
+        cl.addWidget(self._chart)
         self._status = QLabel('Ready — add a stock and click it to load a chart.')
         self._status.setObjectName('StatusBar')
-        layout.addWidget(self._status)
-        return panel
+        cl.addWidget(self._status)
+
+        # the embedded feature pages (formerly pop-up dialogs)
+        self._pages = {
+            'chart':     chart_page,
+            'portfolio': PortfolioPage(),
+            'ledger':    LedgerPage(),
+            'history':   HistoryPage(),
+            'insights':  InsightsPage(main=self),
+            'sentiment': SentimentPage(),
+            'f13':       ThirteenFPage(),
+            'strategy':  StrategyPage(),
+        }
+        for key in ('chart', 'portfolio', 'ledger', 'history',
+                    'insights', 'sentiment', 'f13', 'strategy'):
+            self._stack.addWidget(self._pages[key])
+        return self._stack
+
+    def _show_page(self, key: str):
+        page = self._pages.get(key)
+        if page is None:
+            return
+        self._stack.setCurrentWidget(page)
+        for k, btn in self._nav_btns.items():
+            btn.setChecked(k == key)
+        if hasattr(page, 'on_show'):
+            page.on_show()
 
     def _build_period_bar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
@@ -2205,37 +2229,10 @@ class MainWindow(QMainWindow):
             self._fetch()
         self._status.setText('Refreshed from source.')
 
-    # ── portfolio ──
-    def _open_portfolio(self):
-        PortfolioDialog(self).exec()
-
-    def _open_ledger(self):
-        LedgerDialog(self).exec()
-
-    def _open_history(self):
-        holdings, cash = load_portfolio()
-        HistoryDialog(self, holdings, cash).exec()
-
-    # ── AI insights ──
-    def _open_insights(self):
-        holdings, cash = load_portfolio()
-        InsightsDialog(self, holdings, cash, list(self._watchlist)).exec()
-
-    # ── market sentiment ──
-    def _open_sentiment(self):
-        SentimentDialog(self).exec()
-
-    # ── 13F holdings ──
-    def _open_13f(self):
-        ThirteenFDialog(self).exec()
-
-    # ── firm outlook ──
-    def _open_strategy(self):
-        StrategyDialog(self).exec()
-
     # ── chart ──
     def _on_stock_clicked(self, item):
         self._selected = item.data(Qt.ItemDataRole.UserRole)
+        self._show_page('chart')
         self._fetch()
 
     def _set_period(self, key: str):
@@ -2306,6 +2303,14 @@ class MainWindow(QMainWindow):
                 font-size: 11px; padding: 0;
             }}
             QPushButton#PeriodBtn:checked {{
+                background-color: {HIGHLIGHT}; color: #fff; font-weight: bold;
+            }}
+            QPushButton#NavBtn {{
+                background-color: {ACCENT}; border: 1px solid #2a2a4a;
+                border-radius: 6px; padding: 7px 10px; text-align: left;
+            }}
+            QPushButton#NavBtn:hover {{ background-color: #1a4a80; }}
+            QPushButton#NavBtn:checked {{
                 background-color: {HIGHLIGHT}; color: #fff; font-weight: bold;
             }}
             QLabel {{ color: {TEXT}; }}

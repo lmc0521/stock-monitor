@@ -39,7 +39,7 @@ def run():
     QMainWindow.__init__(win)
     win._apply_theme()
 
-    dlg = main.PortfolioDialog(win)
+    dlg = main.PortfolioPage()
     dlg.setStyleSheet(win.styleSheet())     # inherit the dark theme
     dlg._holdings = HOLDINGS
     dlg._cash = CASH
