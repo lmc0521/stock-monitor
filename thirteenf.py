@@ -24,6 +24,7 @@ _HEADERS = {
 # A few well-known managers (name -> CIK). Users can also enter a CIK directly.
 KNOWN_FUNDS = {
     'Berkshire Hathaway (Warren Buffett)': '1067983',
+    'ARK Invest (Cathie Wood)':            '1697748',
     'Scion Asset Mgmt (Michael Burry)':    '1649339',
     'Pershing Square (Bill Ackman)':       '1336528',
     'Bridgewater Associates':              '1350694',
