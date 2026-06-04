@@ -361,6 +361,25 @@ class InsightsWorker(QThread):
             self.error.emit(str(exc))
 
 
+class StrategyWorker(QThread):
+    """Streams a firm's market-outlook summary from Claude (web search)."""
+    chunk = pyqtSignal(str)
+    done  = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, firm: str):
+        super().__init__()
+        self.firm = firm
+
+    def run(self):
+        try:
+            for text in llm.stream_firm_strategy(self.firm):
+                self.chunk.emit(text)
+            self.done.emit()
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
 # ── list row widget ─────────────────────────────────────────────────────────
 
 class StockRow(QWidget):
@@ -1611,6 +1630,102 @@ class ThirteenFDialog(QDialog):
         self._pie_canvas.draw()
 
 
+# ── firm market-outlook dialog ────────────────────────────────────────────────
+
+class StrategyDialog(QDialog):
+    FIRMS = [
+        'BlackRock', 'JPMorgan Asset Management', 'Goldman Sachs',
+        'Morgan Stanley', 'Vanguard', 'Fidelity', 'UBS',
+        'Bank of America', 'Bridgewater Associates',
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Firm Market Outlook')
+        self.resize(740, 640)
+        self.setStyleSheet(parent.styleSheet() if parent else '')
+        self._job = None
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        row = QHBoxLayout()
+        self._combo = QComboBox()
+        self._combo.setEditable(True)            # allow typing any firm
+        for f in self.FIRMS:
+            self._combo.addItem(f)
+        self._go = QPushButton('Get outlook')
+        self._go.setObjectName('AccentBtn')
+        self._go.clicked.connect(self._ask)
+        row.addWidget(self._combo, 1)
+        row.addWidget(self._go)
+        layout.addLayout(row)
+
+        self._answer = QTextEdit()
+        self._answer.setReadOnly(True)
+        self._answer.setPlaceholderText(
+            "Pick a firm (or type one) and click Get outlook. Claude searches the "
+            "web for their latest published market view and summarizes it.")
+        layout.addWidget(self._answer)
+
+        self._status = QLabel('')
+        self._status.setStyleSheet(f'color: {SUBTEXT}; font-size: 11px;')
+        layout.addWidget(self._status)
+        disc = QLabel('⚠ Summarizes the firm\'s publicly stated views via live web '
+                      'search — not financial advice, and may be incomplete or out '
+                      'of date. Verify against the firm\'s official publications.')
+        disc.setWordWrap(True)
+        disc.setStyleSheet('color: #c9a227; font-size: 11px;')
+        layout.addWidget(disc)
+
+    def _ask(self):
+        if self._job and self._job.isRunning():
+            return
+        firm = self._combo.currentText().strip()
+        if not firm:
+            return
+        self._answer.clear()
+        self._status.setText(f'Researching {firm} …')
+        self._set_busy(True)
+        self._job = StrategyWorker(firm)
+        self._job.chunk.connect(self._on_chunk)
+        self._job.done.connect(self._on_done)
+        self._job.error.connect(self._on_error)
+        self._job.start()
+
+    def _on_chunk(self, text: str):
+        self._answer.moveCursor(self._answer.textCursor().MoveOperation.End)
+        self._answer.insertPlainText(text)
+
+    def _on_done(self):
+        self._set_busy(False)
+        self._status.setText('Done.')
+
+    def _on_error(self, msg: str):
+        self._set_busy(False)
+        low = msg.lower()
+        if 'api_key' in low or 'authentication' in low or 'no claude api key' in low:
+            friendly = ('No Claude API key found. Put a .env file with '
+                        'ANTHROPIC_API_KEY=... next to the app, then reopen.')
+        elif 'connection' in low or 'timeout' in low:
+            friendly = ('Could not reach Claude after retries. Check your internet '
+                        'and try again — web searches can take a bit longer.')
+        elif 'rate' in low or 'overload' in low or '429' in low or '529' in low:
+            friendly = 'Claude is busy or rate-limited. Wait a few seconds and retry.'
+        else:
+            friendly = 'Something went wrong talking to Claude.'
+        self._status.setText('Error.')
+        if self._answer.toPlainText().strip():
+            self._answer.append('\n\n— ' + friendly)
+        else:
+            self._answer.setPlainText(f'{friendly}\n\nDetails: {msg}')
+
+    def _set_busy(self, busy: bool):
+        self._go.setEnabled(not busy)
+        self._combo.setEnabled(not busy)
+
+
 # ── main window ──────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -1750,6 +1865,11 @@ class MainWindow(QMainWindow):
         f13_btn.setObjectName('AccentBtn')
         f13_btn.clicked.connect(self._open_13f)
         layout.addWidget(f13_btn)
+
+        strat_btn = QPushButton('🏛 Firm Outlook')
+        strat_btn.setObjectName('AccentBtn')
+        strat_btn.clicked.connect(self._open_strategy)
+        layout.addWidget(strat_btn)
 
         return panel
 
@@ -1962,6 +2082,10 @@ class MainWindow(QMainWindow):
     # ── 13F holdings ──
     def _open_13f(self):
         ThirteenFDialog(self).exec()
+
+    # ── firm outlook ──
+    def _open_strategy(self):
+        StrategyDialog(self).exec()
 
     # ── chart ──
     def _on_stock_clicked(self, item):

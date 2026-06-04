@@ -106,39 +106,65 @@ def build_user_prompt(portfolio_result: dict, watchlist_quotes: dict | None,
     )
 
 
-def stream_insights(question: str, portfolio_result: dict,
-                    watchlist_quotes: dict | None = None, *, client=None,
-                    attempts: int = 3):
-    """
-    Yield text chunks from a streaming, portfolio-aware Claude response.
+# ── firm strategy / market outlook ───────────────────────────────────────────
 
-    Retries transient connection/overload/rate-limit failures with backoff (only
-    before any text has been produced, to avoid duplicating output). `client` can
-    be injected for testing.
+FIRM_SYSTEM_PROMPT = """You are a research assistant that summarizes a named \
+investment firm's CURRENT, publicly-stated market outlook and strategy for the \
+user. Use the web_search and web_fetch tools to find the firm's most recent house \
+view — outlook reports, CIO/strategist commentary, "guide to the markets", or \
+similar — ideally from the last few months.
 
-    Passing an explicit api_key (rather than letting the SDK auto-resolve auth)
-    avoids a stray/empty ANTHROPIC_AUTH_TOKEN env var producing a bad auth header
-    that surfaces as a confusing "connection error".
-    """
+Structure the summary as short markdown sections:
+- **Overall stance** — their current risk posture (e.g. risk-on/neutral/defensive).
+- **Key calls** — concrete views on equities, bonds/rates, regions, sectors, and \
+the US dollar where stated.
+- **Themes** — the big ideas they're emphasizing (e.g. AI capex, reshoring, rate cuts).
+- **Risks they flag** — what they say could go wrong.
+
+Hard rules:
+- These are the FIRM's views, not yours and not the app's. Attribute clearly and \
+cite each source inline with name + date (e.g. "(BlackRock Investment Institute, 2026-05)").
+- Use the web; do not rely on memory for current positioning. If you can't find \
+recent published views, say so plainly rather than inventing them.
+- This is a summary for education, NOT financial advice. End with a one-line \
+reminder that this summarizes the firm's views and is not advice."""
+
+
+def build_firm_prompt(firm: str) -> str:
+    firm = (firm or "").strip() or "BlackRock"
+    return (
+        f"Summarize {firm}'s current market outlook and investment strategy. "
+        "Search the web for their most recent published house view / outlook "
+        "(last few months), and cite the sources with dates."
+    )
+
+
+def _make_client():
+    """Build an Anthropic client with explicit auth + generous timeout."""
     import os
+    import anthropic
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise RuntimeError(
+            "No Claude API key found. Put ANTHROPIC_API_KEY in a .env file "
+            "next to the app, or set it as an environment variable.")
+    # a blank ANTHROPIC_AUTH_TOKEN would produce a bad 'Bearer ' header that
+    # surfaces as a misleading "connection error"
+    if not (os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip():
+        os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+    return anthropic.Anthropic(api_key=key, max_retries=3, timeout=120.0)
+
+
+def _stream(system_text: str, user_prompt: str, *, client=None, attempts: int = 3):
+    """
+    Shared streaming generator: web-search-enabled, with retry-on-transient-error
+    backoff (only before any text is produced, to avoid duplicating output).
+    """
     import time
-    import anthropic  # imported lazily so the rest of the app runs without the package
+    import anthropic
 
-    if client is None:
-        key = os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
-            raise RuntimeError(
-                "No Claude API key found. Put ANTHROPIC_API_KEY in a .env file "
-                "next to the app, or set it as an environment variable.")
-        # a blank ANTHROPIC_AUTH_TOKEN would be picked up and produce a bad
-        # 'Bearer ' auth header, which fails as a misleading "connection error"
-        if not (os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip():
-            os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
-        client = anthropic.Anthropic(api_key=key, max_retries=3, timeout=120.0)
+    client = client or _make_client()
 
-    user_prompt = build_user_prompt(portfolio_result, watchlist_quotes, question)
-
-    # transient errors worth retrying (APITimeoutError subclasses APIConnectionError)
     transient = (anthropic.APIConnectionError, anthropic.InternalServerError)
     for extra in ("RateLimitError", "OverloadedError"):
         cls = getattr(anthropic, extra, None)
@@ -152,17 +178,14 @@ def stream_insights(question: str, portfolio_result: dict,
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
                 thinking={"type": "adaptive"},
-                # effort medium: a latency/cost balance that suits an interactive desktop app;
-                # bump to "high" for deeper analysis.
                 output_config={"effort": "medium"},
-                # server-side web tools so Claude can pull live fundamentals/news itself
                 tools=[
                     {"type": "web_search_20260209", "name": "web_search"},
                     {"type": "web_fetch_20260209", "name": "web_fetch"},
                 ],
                 system=[{
                     "type": "text",
-                    "text": SYSTEM_PROMPT,
+                    "text": system_text,
                     "cache_control": {"type": "ephemeral"},
                 }],
                 messages=[{"role": "user", "content": user_prompt}],
@@ -172,7 +195,20 @@ def stream_insights(question: str, portfolio_result: dict,
                     yield text
             return
         except transient:
-            # don't retry once we've already streamed text (would duplicate output)
             if produced or attempt == attempts - 1:
                 raise
             time.sleep(1.5 * (attempt + 1))
+
+
+def stream_insights(question: str, portfolio_result: dict,
+                    watchlist_quotes: dict | None = None, *, client=None,
+                    attempts: int = 3):
+    """Yield text chunks from a streaming, portfolio-aware, web-search Claude response."""
+    user_prompt = build_user_prompt(portfolio_result, watchlist_quotes, question)
+    yield from _stream(SYSTEM_PROMPT, user_prompt, client=client, attempts=attempts)
+
+
+def stream_firm_strategy(firm: str, *, client=None, attempts: int = 3):
+    """Yield text chunks summarizing a firm's current market outlook (web-search)."""
+    yield from _stream(FIRM_SYSTEM_PROMPT, build_firm_prompt(firm),
+                       client=client, attempts=attempts)

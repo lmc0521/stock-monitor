@@ -23,7 +23,9 @@ inspector, portfolio P&L tracking, and Claude-powered, portfolio-aware analysis.
 - **Market Sentiment** — CNN Fear & Greed (+ its 7 components), the crypto
   Fear & Greed index, and the VIX, on color-coded gauges.
 - **13F Holdings** — browse what famous institutional managers (Berkshire,
-  BlackRock, etc.) hold, from their latest SEC EDGAR 13F filing.
+  ARK/Cathie Wood, BlackRock, etc.) hold, from their latest SEC EDGAR 13F filing.
+- **Firm Outlook** — AI-summarized current market view/strategy for major firms
+  (BlackRock, JPMorgan, Goldman, etc.) via live web search, with sources.
 - **AI Insights** — sends your portfolio + watchlist snapshot to Claude for
   portfolio-aware analysis with **live web search** (current news, fundamentals,
   volatility), citing sources.

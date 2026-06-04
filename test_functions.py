@@ -249,6 +249,18 @@ def test_llm_prompt():
     check('system prompt is substantial', len(llm.SYSTEM_PROMPT) > 200)
     check('model is opus-4-8', llm.MODEL == 'claude-opus-4-8', detail=llm.MODEL)
 
+    # firm-strategy prompt builder
+    fp = llm.build_firm_prompt('JPMorgan')
+    check('firm prompt names the firm', 'JPMorgan' in fp)
+    check('firm prompt asks to web-search recent view', 'web' in fp.lower() and 'outlook' in fp.lower())
+    check('empty firm defaults to BlackRock', 'BlackRock' in llm.build_firm_prompt(''))
+    check('firm system prompt substantial', len(llm.FIRM_SYSTEM_PROMPT) > 200)
+
+    # firm strategy streams through the same shared machinery (fake client)
+    fc2 = _Client()
+    out2 = ''.join(llm.stream_firm_strategy('BlackRock', client=fc2))
+    check('stream_firm_strategy yields text via _stream', out2 == 'analysis ok', detail=out2)
+
 
 # ── 8. data cache layer (offline) ────────────────────────────────────────────
 def test_cache():
