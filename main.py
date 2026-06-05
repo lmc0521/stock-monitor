@@ -80,11 +80,51 @@ class MainWindow(QMainWindow):
     def _build_ui(self):
         root = QWidget()
         self.setCentralWidget(root)
-        root_layout = QHBoxLayout(root)
-        root_layout.setContentsMargins(8, 8, 8, 8)
-        root_layout.setSpacing(8)
-        root_layout.addWidget(self._build_left_panel(), 0)
-        root_layout.addWidget(self._build_right_panel(), 1)
+        outer = QVBoxLayout(root)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(8)
+        outer.addWidget(self._build_nav_bar(), 0)         # navigation across the top
+        body = QHBoxLayout()
+        body.setSpacing(8)
+        body.addWidget(self._build_left_panel(), 0)       # watchlist gets the full left column
+        body.addWidget(self._build_right_panel(), 1)
+        outer.addLayout(body, 1)
+
+    def _build_nav_bar(self) -> QWidget:
+        """Top navigation bar — switches the embedded page on the right."""
+        bar = QFrame()
+        bar.setObjectName('NavBar')
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(6, 5, 6, 5)
+        h.setSpacing(4)
+
+        nav = [
+            ('📈 Chart',     'chart'),
+            ('🎯 Analysis',  'analysis'),
+            ('📊 Portfolio', 'portfolio'),
+            ('🧾 Ledger',    'ledger'),
+            ('🕒 History',   'history'),
+            ('💡 Insights',  'insights'),
+            ('😱 Sentiment', 'sentiment'),
+            ('🏦 13F',       'f13'),
+            ('🏛 Outlook',   'strategy'),
+            ('🚀 IPO',       'ipo'),
+        ]
+        self._nav_btns = {}
+        for label, key in nav:
+            btn = QPushButton(label)
+            btn.setObjectName('NavBtn')
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda _, k=key: self._show_page(k))
+            h.addWidget(btn)
+            self._nav_btns[key] = btn
+
+        h.addStretch()
+        alert_btn = QPushButton('🔔 Alerts')
+        alert_btn.setObjectName('AccentBtn')
+        alert_btn.clicked.connect(self._open_alerts)
+        h.addWidget(alert_btn)
+        return bar
 
     def _build_left_panel(self) -> QWidget:
         panel = QFrame()
@@ -130,7 +170,7 @@ class MainWindow(QMainWindow):
         self._list = QListWidget()
         self._list.setObjectName('StockList')
         self._list.itemClicked.connect(self._on_stock_clicked)
-        layout.addWidget(self._list)
+        layout.addWidget(self._list, 1)                   # fills the rest of the column
 
         btn_row = QHBoxLayout()
         rm_btn = QPushButton('Remove')
@@ -140,39 +180,6 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(rm_btn)
         btn_row.addWidget(ref_btn)
         layout.addLayout(btn_row)
-
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setObjectName('Separator')
-        layout.addWidget(sep2)
-
-        # navigation — these switch the embedded page on the right
-        nav = [
-            ('📈 Chart',             'chart'),
-            ('🎯 Stock Analysis',    'analysis'),
-            ('📊 Portfolio / P&L',   'portfolio'),
-            ('🧾 Transactions',      'ledger'),
-            ('🕒 Portfolio History', 'history'),
-            ('💡 AI Insights',       'insights'),
-            ('😱 Market Sentiment',  'sentiment'),
-            ('🏦 13F Holdings',      'f13'),
-            ('🏛 Firm Outlook',      'strategy'),
-            ('🚀 IPO Calendar',      'ipo'),
-        ]
-        self._nav_btns = {}
-        for label, key in nav:
-            btn = QPushButton(label)
-            btn.setObjectName('NavBtn')
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda _, k=key: self._show_page(k))
-            layout.addWidget(btn)
-            self._nav_btns[key] = btn
-
-        # alerts stays a pop-up (its job is to interrupt you when one fires)
-        alert_btn = QPushButton('🔔 Price Alerts')
-        alert_btn.setObjectName('AccentBtn')
-        alert_btn.clicked.connect(self._open_alerts)
-        layout.addWidget(alert_btn)
 
         return panel
 
@@ -471,9 +478,13 @@ class MainWindow(QMainWindow):
             QPushButton#PeriodBtn:checked {{
                 background-color: {HIGHLIGHT}; color: #fff; font-weight: bold;
             }}
+            QFrame#NavBar {{
+                background-color: {PANEL_BG}; border-radius: 8px;
+                border: 1px solid #2a2a4a;
+            }}
             QPushButton#NavBtn {{
                 background-color: {ACCENT}; border: 1px solid #2a2a4a;
-                border-radius: 6px; padding: 7px 10px; text-align: left;
+                border-radius: 6px; padding: 7px 6px; font-size: 12px;
             }}
             QPushButton#NavBtn:hover {{ background-color: #1a4a80; }}
             QPushButton#NavBtn:checked {{
