@@ -212,3 +212,41 @@ def stream_firm_strategy(firm: str, *, client=None, attempts: int = 3):
     """Yield text chunks summarizing a firm's current market outlook (web-search)."""
     yield from _stream(FIRM_SYSTEM_PROMPT, build_firm_prompt(firm),
                        client=client, attempts=attempts)
+
+
+RUMORED_IPO_SYSTEM_PROMPT = """You summarize companies that are RUMORED or widely \
+EXPECTED to go public but have NOT necessarily filed a public registration yet. Use \
+the web_search and web_fetch tools to find recent reporting (last few months).
+
+For each notable company, give a short bullet:
+- **Company** — one line on what it does.
+- **Status** — e.g. "reportedly considering", "confidentially filed", "expected 2026", \
+"no filing yet". Distinguish companies that have actually filed (even confidentially) \
+from pure speculation.
+- **Timeframe** — rough expected window if reported.
+- Cite the source name + date inline (e.g. "(Reuters, 2026-05)").
+
+Group into "Filed / near-term" and "Rumored / longer-term" if helpful.
+
+Hard rules:
+- These are RUMORS and press reports, NOT confirmed or scheduled IPOs. State that \
+clearly at the top. Many never happen, get delayed for years, or stay private.
+- Do not fabricate. If reporting on a name is thin or it has publicly said it intends \
+to stay private (e.g. SpaceX), say so rather than implying an IPO is imminent.
+- Educational only, not financial advice. End with a one-line reminder that these are \
+unconfirmed and not advice."""
+
+
+def build_rumored_ipo_prompt() -> str:
+    return (
+        "List the most notable companies currently rumored or widely expected to IPO "
+        "(primarily US-listed, near-to-medium term). Search the web for recent "
+        "reporting, cite sources with dates, and clearly mark each as "
+        "rumored/unconfirmed versus actually filed."
+    )
+
+
+def stream_rumored_ipos(*, client=None, attempts: int = 3):
+    """Yield text chunks summarizing rumored/expected IPOs from recent news (web-search)."""
+    yield from _stream(RUMORED_IPO_SYSTEM_PROMPT, build_rumored_ipo_prompt(),
+                       client=client, attempts=attempts)

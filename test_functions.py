@@ -261,6 +261,14 @@ def test_llm_prompt():
     out2 = ''.join(llm.stream_firm_strategy('BlackRock', client=fc2))
     check('stream_firm_strategy yields text via _stream', out2 == 'analysis ok', detail=out2)
 
+    # rumored-IPO prompt + shared streaming
+    check('rumored IPO system prompt substantial', len(llm.RUMORED_IPO_SYSTEM_PROMPT) > 200)
+    check('rumored prompt asks to web-search + mark unconfirmed',
+          'rumored' in llm.build_rumored_ipo_prompt().lower())
+    fc3 = _Client()
+    out3 = ''.join(llm.stream_rumored_ipos(client=fc3))
+    check('stream_rumored_ipos yields text via _stream', out3 == 'analysis ok', detail=out3)
+
 
 # ── 8. data cache layer (offline) ────────────────────────────────────────────
 def test_cache():

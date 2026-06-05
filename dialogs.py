@@ -25,7 +25,8 @@ from theme import (DARK_BG, PANEL_BG, ACCENT, HIGHLIGHT, TEXT, SUBTEXT,
 from appstate import (compute_portfolio, load_portfolio, save_portfolio,
                       parse_portfolio_csv, save_alerts)
 from workers import (PriceFetcher, SearchWorker, InsightsWorker, SentimentWorker,
-                     HistoryWorker, ThirteenFWorker, StrategyWorker, IPOWorker)
+                     HistoryWorker, ThirteenFWorker, StrategyWorker, IPOWorker,
+                     RumoredIPOWorker)
 
 class AddHoldingDialog(QDialog):
     """Add a single holding, with company-name autocomplete and symbol validation."""
@@ -1282,12 +1283,14 @@ class StrategyPage(QWidget):
 
 class IPOPage(QWidget):
     HEADERS = ['Symbol', 'Company', 'Exchange', 'Price', 'Shares', 'Date', '$ Value']
-    SECTIONS = [('Upcoming', 'upcoming'), ('Priced', 'priced'), ('Filed (SEC)', 'filed')]
+    SECTIONS = [('Upcoming', 'upcoming'), ('Priced', 'priced'),
+                ('Filed (SEC)', 'filed'), ('Rumored (AI)', 'rumored')]
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._data = {}
         self._job = None
+        self._ai_job = None
         self._loaded = False
         self._build_ui()
 
@@ -1314,7 +1317,7 @@ class IPOPage(QWidget):
         self._section = QComboBox()
         for label, _key in self.SECTIONS:
             self._section.addItem(label)
-        self._section.currentIndexChanged.connect(self._render)
+        self._section.currentIndexChanged.connect(self._on_section)
         self._month = QComboBox()
         months = self._months()
         self._month.addItems(months)
@@ -1341,17 +1344,44 @@ class IPOPage(QWidget):
         self._table.verticalHeader().setVisible(False)
         layout.addWidget(self._table)
 
+        # AI text view for the "Rumored" section (hidden unless selected)
+        self._ai = QTextEdit()
+        self._ai.setReadOnly(True)
+        self._ai.setVisible(False)
+        self._ai.setPlaceholderText('Rumored / expected IPOs from recent news '
+                                    '(AI + live web search)…')
+        layout.addWidget(self._ai)
+
         self._status = QLabel('')
         self._status.setStyleSheet(f'color: {SUBTEXT}; font-size: 11px;')
         layout.addWidget(self._status)
-        disc = QLabel('Source: Nasdaq IPO calendar (unofficial). "Upcoming" = expected '
-                      'to price, "Priced" = already IPO\'d, "Filed" = registered with the '
-                      'SEC. For information only.')
+        disc = QLabel('Source: Nasdaq IPO calendar (unofficial) for Upcoming/Priced/Filed '
+                      '— companies that have actually filed with the SEC. "Rumored (AI)" '
+                      'is press speculation via web search — unconfirmed, not a filing. '
+                      'For information only.')
         disc.setWordWrap(True)
         disc.setStyleSheet(f'color: {SUBTEXT}; font-size: 10px;')
         layout.addWidget(disc)
 
+    def _section_key(self):
+        return self.SECTIONS[self._section.currentIndex()][1]
+
+    def _on_section(self):
+        if self._section_key() == 'rumored':
+            self._table.setVisible(False)
+            self._ai.setVisible(True)
+            if not self._ai.toPlainText().strip() and not (
+                    self._ai_job and self._ai_job.isRunning()):
+                self._gen_rumored()
+        else:
+            self._ai.setVisible(False)
+            self._table.setVisible(True)
+            self._render()
+
     def _load(self):
+        if self._section_key() == 'rumored':
+            self._gen_rumored()
+            return
         if self._job and self._job.isRunning():
             return
         month = self._month.currentText()
@@ -1360,6 +1390,21 @@ class IPOPage(QWidget):
         self._job.ready.connect(self._on_ready)
         self._job.error.connect(lambda m: self._status.setText('Error: ' + m))
         self._job.start()
+
+    def _gen_rumored(self):
+        if self._ai_job and self._ai_job.isRunning():
+            return
+        self._ai.clear()
+        self._status.setText('Searching the news for rumored / expected IPOs …')
+        self._ai_job = RumoredIPOWorker()
+        self._ai_job.chunk.connect(self._on_ai_chunk)
+        self._ai_job.done.connect(lambda: self._status.setText('Done — rumored / unconfirmed.'))
+        self._ai_job.error.connect(lambda m: self._status.setText('Error: ' + m))
+        self._ai_job.start()
+
+    def _on_ai_chunk(self, text: str):
+        self._ai.moveCursor(self._ai.textCursor().MoveOperation.End)
+        self._ai.insertPlainText(text)
 
     def _on_ready(self, data: dict):
         self._data = data

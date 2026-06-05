@@ -30,6 +30,21 @@ class IPOWorker(QThread):
             self.error.emit(str(exc))
 
 
+class RumoredIPOWorker(QThread):
+    """Streams an AI summary of rumored/expected IPOs from recent news."""
+    chunk = pyqtSignal(str)
+    done  = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def run(self):
+        try:
+            for text in llm.stream_rumored_ipos():
+                self.chunk.emit(text)
+            self.done.emit()
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
 class DataFetcher(QThread):
     """Fetches OHLCV history for the chart."""
     data_ready = pyqtSignal(object, str)
