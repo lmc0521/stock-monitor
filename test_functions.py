@@ -578,6 +578,42 @@ def test_ledger():
           detail=str(series.loc[idx[2]]))
 
 
+# ── 15. IPO calendar parsing (offline) ───────────────────────────────────────
+def test_ipo():
+    print('\n[15] IPO calendar parsing (offline)')
+    import ipo as ipomod
+
+    payload = {'data': {
+        'priced': {'rows': [{
+            'proposedTickerSymbol': 'AAA', 'companyName': 'Alpha Inc',
+            'proposedExchange': 'NASDAQ', 'proposedSharePrice': '10.00',
+            'sharesOffered': '1,000,000', 'pricedDate': '6/01/2026',
+            'dollarValueOfSharesOffered': '$10,000,000'}]},
+        'upcoming': {'rows': [{
+            'proposedTickerSymbol': 'BBB', 'companyName': 'Beta Corp',
+            'proposedExchange': 'NYSE', 'proposedSharePrice': '18.00-20.00',
+            'sharesOffered': '5,000,000', 'expectedPriceDate': '6/15/2026',
+            'dollarValueOfSharesOffered': '$95,000,000'}]},
+        'filed': {'rows': [{
+            'proposedTickerSymbol': 'CCC', 'companyName': 'Gamma LLC',
+            'filedDate': '6/03/2026', 'dollarValueOfSharesOffered': '$50,000,000'}]},
+        'month': '6', 'year': '2026'}}
+
+    cal = ipomod.parse_calendar(payload)
+    check('priced parsed (1)', len(cal['priced']) == 1, detail=str(len(cal['priced'])))
+    check('upcoming uses expectedPriceDate', cal['upcoming'][0]['date'] == '6/15/2026',
+          detail=cal['upcoming'][0]['date'])
+    check('priced uses pricedDate', cal['priced'][0]['date'] == '6/01/2026')
+    check('filed row parsed with amount', cal['filed'][0]['amount'] == '$50,000,000')
+    check('normalized fields present',
+          set(cal['priced'][0]) >= {'symbol', 'company', 'exchange', 'price', 'shares', 'date', 'amount'})
+    check('missing fields default to empty', cal['filed'][0]['exchange'] == '')
+
+    # empty/malformed payload is safe
+    empty = ipomod.parse_calendar({})
+    check('empty payload -> empty sections', empty['priced'] == [] and empty['upcoming'] == [])
+
+
 def main_run():
     QApplication(sys.argv)   # needed so QObject/QThread can be constructed
     print('=' * 60)
@@ -596,6 +632,7 @@ def main_run():
     test_history()
     test_13f()
     test_ledger()
+    test_ipo()
     test_quotes()
     test_search()
 

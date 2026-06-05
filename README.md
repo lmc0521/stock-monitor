@@ -29,6 +29,7 @@ inspector, portfolio P&L tracking, and Claude-powered, portfolio-aware analysis.
   ARK/Cathie Wood, BlackRock, etc.) hold, from their latest SEC EDGAR 13F filing.
 - **Firm Outlook** — AI-summarized current market view/strategy for major firms
   (BlackRock, JPMorgan, Goldman, etc.) via live web search, with sources.
+- **IPO Calendar** — upcoming, priced, and SEC-filed IPOs by month (Nasdaq feed).
 - **AI Insights** — sends your portfolio + watchlist snapshot to Claude for
   portfolio-aware analysis with **live web search** (current news, fundamentals,
   volatility), citing sources.
@@ -128,6 +129,7 @@ See `sample_portfolio.csv` for a ready-made example.
 | `ledger.py` | Transaction ledger → positions, realized P&L, dividends |
 | `history.py` | Portfolio value reconstruction + daily snapshots |
 | `thirteenf.py` | SEC EDGAR 13F holdings fetch + parse |
+| `ipo.py` | Nasdaq IPO calendar fetch + parse |
 | `llm.py` | Claude prompt builders + streaming analysis (with web search) |
 | `test_functions.py` | Headless unit tests (persistence, EMA, P&L, prompts, cache) |
 | `smoke_test.py` | Launches the GUI, loads a chart, screenshots it |

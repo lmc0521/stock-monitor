@@ -11,6 +11,24 @@ import llm
 import sentiment
 import history
 import thirteenf
+import ipo
+
+
+class IPOWorker(QThread):
+    """Fetches the Nasdaq IPO calendar for a month off the UI thread."""
+    ready = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, month: str):
+        super().__init__()
+        self.month = month
+
+    def run(self):
+        try:
+            self.ready.emit(ipo.fetch_calendar(self.month))
+        except Exception as exc:
+            self.error.emit(str(exc))
+
 
 class DataFetcher(QThread):
     """Fetches OHLCV history for the chart."""

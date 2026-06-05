@@ -25,7 +25,7 @@ from theme import (DARK_BG, PANEL_BG, ACCENT, HIGHLIGHT, TEXT, SUBTEXT,
 from appstate import (compute_portfolio, load_portfolio, save_portfolio,
                       parse_portfolio_csv, save_alerts)
 from workers import (PriceFetcher, SearchWorker, InsightsWorker, SentimentWorker,
-                     HistoryWorker, ThirteenFWorker, StrategyWorker)
+                     HistoryWorker, ThirteenFWorker, StrategyWorker, IPOWorker)
 
 class AddHoldingDialog(QDialog):
     """Add a single holding, with company-name autocomplete and symbol validation."""
@@ -1276,6 +1276,111 @@ class StrategyPage(QWidget):
     def _set_busy(self, busy: bool):
         self._go.setEnabled(not busy)
         self._combo.setEnabled(not busy)
+
+
+# ── IPO calendar page ─────────────────────────────────────────────────────────
+
+class IPOPage(QWidget):
+    HEADERS = ['Symbol', 'Company', 'Exchange', 'Price', 'Shares', 'Date', '$ Value']
+    SECTIONS = [('Upcoming', 'upcoming'), ('Priced', 'priced'), ('Filed (SEC)', 'filed')]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data = {}
+        self._job = None
+        self._loaded = False
+        self._build_ui()
+
+    def on_show(self):
+        if not self._loaded:
+            self._loaded = True
+            self._load()
+
+    @staticmethod
+    def _months(n_back: int = 2, n_fwd: int = 1) -> list:
+        from datetime import date
+        today = date.today()
+        out = []
+        for off in range(-n_back, n_fwd + 1):
+            y = today.year + (today.month - 1 + off) // 12
+            m = (today.month - 1 + off) % 12 + 1
+            out.append(f'{y:04d}-{m:02d}')
+        return out
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        top = QHBoxLayout()
+        self._section = QComboBox()
+        for label, _key in self.SECTIONS:
+            self._section.addItem(label)
+        self._section.currentIndexChanged.connect(self._render)
+        self._month = QComboBox()
+        months = self._months()
+        self._month.addItems(months)
+        self._month.setCurrentText(months[2] if len(months) > 2 else months[-1])  # current month
+        self._month.currentIndexChanged.connect(self._load)
+        load = QPushButton('Load')
+        load.setObjectName('AccentBtn')
+        load.clicked.connect(self._load)
+        top.addWidget(QLabel('Show:'))
+        top.addWidget(self._section)
+        top.addWidget(QLabel('Month:'))
+        top.addWidget(self._month)
+        top.addWidget(load)
+        top.addStretch()
+        layout.addLayout(top)
+
+        self._table = QTableWidget(0, len(self.HEADERS))
+        self._table.setHorizontalHeaderLabels(self.HEADERS)
+        hh = self._table.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)   # Company stretches
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._table.verticalHeader().setVisible(False)
+        layout.addWidget(self._table)
+
+        self._status = QLabel('')
+        self._status.setStyleSheet(f'color: {SUBTEXT}; font-size: 11px;')
+        layout.addWidget(self._status)
+        disc = QLabel('Source: Nasdaq IPO calendar (unofficial). "Upcoming" = expected '
+                      'to price, "Priced" = already IPO\'d, "Filed" = registered with the '
+                      'SEC. For information only.')
+        disc.setWordWrap(True)
+        disc.setStyleSheet(f'color: {SUBTEXT}; font-size: 10px;')
+        layout.addWidget(disc)
+
+    def _load(self):
+        if self._job and self._job.isRunning():
+            return
+        month = self._month.currentText()
+        self._status.setText(f'Fetching IPO calendar for {month} …')
+        self._job = IPOWorker(month)
+        self._job.ready.connect(self._on_ready)
+        self._job.error.connect(lambda m: self._status.setText('Error: ' + m))
+        self._job.start()
+
+    def _on_ready(self, data: dict):
+        self._data = data
+        self._render()
+
+    def _render(self):
+        key = self.SECTIONS[self._section.currentIndex()][1]
+        rows = self._data.get(key, [])
+        self._table.setRowCount(len(rows))
+        for r, item in enumerate(rows):
+            cells = [item['symbol'], item['company'], item['exchange'],
+                     item['price'], item['shares'], item['date'], item['amount']]
+            for c, text in enumerate(cells):
+                cell = QTableWidgetItem(text)
+                cell.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | (
+                    Qt.AlignmentFlag.AlignLeft if c in (1, 2) else (
+                        Qt.AlignmentFlag.AlignLeft if c == 0 else Qt.AlignmentFlag.AlignRight)))
+                self._table.setItem(r, c, cell)
+        label = self.SECTIONS[self._section.currentIndex()][0]
+        self._status.setText(f'{len(rows)} {label.lower()} IPO(s) for '
+                             f'{self._month.currentText()}.')
 
 
 # ── main window ──────────────────────────────────────────────────────────────

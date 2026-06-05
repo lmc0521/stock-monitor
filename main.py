@@ -28,7 +28,8 @@ from workers import (DataFetcher, QuoteFetcher, SearchWorker, PriceFetcher,
                      StrategyWorker)
 from widgets import StockRow, ChartPanel
 from dialogs import (AddHoldingDialog, AlertsDialog, PortfolioPage, InsightsPage,
-                     SentimentPage, LedgerPage, HistoryPage, ThirteenFPage, StrategyPage)
+                     SentimentPage, LedgerPage, HistoryPage, ThirteenFPage, StrategyPage,
+                     IPOPage)
 
 
 class MainWindow(QMainWindow):
@@ -155,6 +156,7 @@ class MainWindow(QMainWindow):
             ('😱 Market Sentiment',  'sentiment'),
             ('🏦 13F Holdings',      'f13'),
             ('🏛 Firm Outlook',      'strategy'),
+            ('🚀 IPO Calendar',      'ipo'),
         ]
         self._nav_btns = {}
         for label, key in nav:
@@ -198,9 +200,10 @@ class MainWindow(QMainWindow):
             'sentiment': SentimentPage(),
             'f13':       ThirteenFPage(),
             'strategy':  StrategyPage(),
+            'ipo':       IPOPage(),
         }
         for key in ('chart', 'portfolio', 'ledger', 'history',
-                    'insights', 'sentiment', 'f13', 'strategy'):
+                    'insights', 'sentiment', 'f13', 'strategy', 'ipo'):
             self._stack.addWidget(self._pages[key])
         return self._stack
 
