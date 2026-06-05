@@ -155,3 +155,14 @@ python portfolio_smoke.py    # portfolio dialog -> portfolio_smoke.png
   cost basis, and does not normalize currencies across exchanges.
 - AI Insights is educational analysis, **not financial advice**. The model only
   sees the prices shown in the app — it has no independent live market data.
+
+## License
+
+MIT License — see [LICENSE](LICENSE). You may use, modify, and distribute this
+freely; it comes with no warranty.
+
+## Disclaimer
+
+This is a personal tool for information and education only. It is **not financial
+advice**. Market data comes from free, unofficial sources and may be delayed,
+rate-limited, or wrong. Verify anything important before acting on it.
