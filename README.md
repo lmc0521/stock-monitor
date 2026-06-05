@@ -116,7 +116,12 @@ See `sample_portfolio.csv` for a ready-made example.
 
 | File | Purpose |
 |---|---|
-| `main.py` | The PyQt6 app: windows, dialogs, workers, charting |
+| `main.py` | App shell: MainWindow, navigation, entry point |
+| `theme.py` | Display constants (time ranges, EMA spans, palette) |
+| `appstate.py` | Model layer (no Qt): portfolio P&L, alerts, file paths |
+| `workers.py` | Background QThread workers (network off the UI thread) |
+| `widgets.py` | Watchlist row + candlestick chart panel |
+| `dialogs.py` | Feature pages (embedded) + small pop-up dialogs |
 | `data.py` | Cached market-data layer (yfinance + TTL cache + retry) |
 | `indicators.py` | RSI / MACD / Bollinger / SMA math |
 | `sentiment.py` | Fear & Greed + VIX sentiment data |
