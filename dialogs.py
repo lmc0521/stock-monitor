@@ -26,7 +26,7 @@ from appstate import (compute_portfolio, load_portfolio, save_portfolio,
                       parse_portfolio_csv, save_alerts)
 from workers import (PriceFetcher, SearchWorker, InsightsWorker, SentimentWorker,
                      HistoryWorker, ThirteenFWorker, StrategyWorker, IPOWorker,
-                     RumoredIPOWorker)
+                     RumoredIPOWorker, AnalysisWorker)
 
 class AddHoldingDialog(QDialog):
     """Add a single holding, with company-name autocomplete and symbol validation."""
@@ -1426,6 +1426,120 @@ class IPOPage(QWidget):
         label = self.SECTIONS[self._section.currentIndex()][0]
         self._status.setText(f'{len(rows)} {label.lower()} IPO(s) for '
                              f'{self._month.currentText()}.')
+
+
+# ── stock analysis page (targets + levels) ────────────────────────────────────
+
+class StockAnalysisPage(QWidget):
+    HEADERS = ['Reference Level', 'Price', 'vs Current', 'Type']
+
+    def __init__(self, parent=None, main=None):
+        super().__init__(parent)
+        self._main = main
+        self._job = None
+        self._loaded_symbol = None
+        self._build_ui()
+
+    def on_show(self):
+        sym = (self._main._selected if self._main else None)
+        if sym and sym != self._loaded_symbol:
+            self._sym.setText(sym)
+            self._load()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        top = QHBoxLayout()
+        self._sym = QLineEdit()
+        self._sym.setPlaceholderText('Symbol (e.g. AAPL)')
+        self._sym.setFixedWidth(140)
+        self._sym.returnPressed.connect(self._load)
+        load = QPushButton('Load')
+        load.setObjectName('AccentBtn')
+        load.clicked.connect(self._load)
+        top.addWidget(QLabel('Stock:'))
+        top.addWidget(self._sym)
+        top.addWidget(load)
+        top.addStretch()
+        layout.addLayout(top)
+
+        hdr = QLabel('Analyst Price Target')
+        hdr.setFont(QFont('Segoe UI', 12, QFont.Weight.Bold))
+        layout.addWidget(hdr)
+        self._target = QLabel('Select a stock (or click one in the watchlist).')
+        self._target.setTextFormat(Qt.TextFormat.RichText)
+        self._target.setWordWrap(True)
+        layout.addWidget(self._target)
+
+        hdr2 = QLabel('Technical Reference Levels')
+        hdr2.setFont(QFont('Segoe UI', 12, QFont.Weight.Bold))
+        layout.addWidget(hdr2)
+        self._table = QTableWidget(0, len(self.HEADERS))
+        self._table.setHorizontalHeaderLabels(self.HEADERS)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._table.verticalHeader().setVisible(False)
+        layout.addWidget(self._table)
+
+        self._status = QLabel('')
+        self._status.setStyleSheet(f'color: {SUBTEXT}; font-size: 11px;')
+        layout.addWidget(self._status)
+        disc = QLabel('Analyst targets via Yahoo Finance (consensus of analyst estimates). '
+                      'Technical levels are computed reference points (support/resistance, '
+                      'moving averages, Bollinger bands) — NOT buy/sell advice. Levels above '
+                      'the price are resistance; below are support.')
+        disc.setWordWrap(True)
+        disc.setStyleSheet('color: #c9a227; font-size: 11px;')
+        layout.addWidget(disc)
+
+    def _load(self):
+        sym = self._sym.text().strip().upper()
+        if not sym:
+            return
+        if self._job and self._job.isRunning():
+            return
+        self._status.setText(f'Loading analysis for {sym} …')
+        self._job = AnalysisWorker(sym)
+        self._job.ready.connect(self._on_ready)
+        self._job.error.connect(lambda m: self._status.setText('Error: ' + m))
+        self._job.start()
+
+    @staticmethod
+    def _money(v):
+        return f'${v:,.2f}' if v else 'n/a'
+
+    def _on_ready(self, d: dict):
+        self._loaded_symbol = d['symbol']
+        t = d['target']
+        up = t.get('upside_pct')
+        upcol = UP_COLOR if (up or 0) >= 0 else DOWN_COLOR
+        upstr = (f" <span style='color:{upcol}'>({up:+.1f}% "
+                 f"{'upside' if up >= 0 else 'downside'})</span>") if up is not None else ''
+        self._target.setText(
+            f"<b>{d['symbol']}</b> &nbsp; current {self._money(t['current'])}<br>"
+            f"Analyst mean target: <b>{self._money(t['mean'])}</b>{upstr} &nbsp;|&nbsp; "
+            f"{t.get('n_analysts') or 0} analysts &nbsp;|&nbsp; rec: "
+            f"<b>{t.get('rec_key') or 'n/a'}</b><br>"
+            f"High {self._money(t['high'])} &nbsp; Median {self._money(t['median'])} "
+            f"&nbsp; Low {self._money(t['low'])}")
+
+        cur = d['levels'].get('current')
+        levels = d['levels'].get('levels', [])
+        self._table.setRowCount(len(levels))
+        for r, lv in enumerate(levels):
+            above = cur is not None and lv['value'] >= cur
+            color = DOWN_COLOR if above else UP_COLOR
+            tag = 'resistance' if above else 'support'
+            cells = [lv['name'], f"${lv['value']:,.2f}", f"{lv['pct']:+.1f}%", tag]
+            for c, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | (
+                    Qt.AlignmentFlag.AlignLeft if c == 0 else Qt.AlignmentFlag.AlignRight))
+                if c >= 1:
+                    item.setForeground(QColor(color))
+                self._table.setItem(r, c, item)
+        self._status.setText(f"Loaded {d['symbol']} — {len(levels)} reference levels.")
 
 
 # ── main window ──────────────────────────────────────────────────────────────

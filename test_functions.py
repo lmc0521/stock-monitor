@@ -622,6 +622,43 @@ def test_ipo():
     check('empty payload -> empty sections', empty['priced'] == [] and empty['upcoming'] == [])
 
 
+# ── 16. stock analysis: targets + technical levels (offline) ─────────────────
+def test_analysis():
+    print('\n[16] Stock analysis (offline)')
+    import analysis as an
+
+    info = {
+        'currentPrice': 100.0, 'targetMeanPrice': 120.0, 'targetHighPrice': 150.0,
+        'targetLowPrice': 80.0, 'targetMedianPrice': 118.0, 'numberOfAnalystOpinions': 30,
+        'recommendationKey': 'buy', 'recommendationMean': 1.9,
+        'fiftyTwoWeekHigh': 160.0, 'fiftyTwoWeekLow': 70.0,
+        'fiftyDayAverage': 95.0, 'twoHundredDayAverage': 90.0,
+    }
+    t = an.parse_target(info)
+    check('target mean parsed', t['mean'] == 120.0)
+    check('upside = +20%', abs(t['upside_pct'] - 20.0) < 1e-9, detail=f"{t['upside_pct']:.1f}%")
+    check('recommendation key', t['rec_key'] == 'buy')
+
+    # missing targets -> upside None, not a crash
+    t2 = an.parse_target({'currentPrice': 50.0})
+    check('missing target -> upside None', t2['upside_pct'] is None)
+
+    # technical levels: above current = resistance, below = support
+    idx = pd.date_range('2025-01-01', periods=30)
+    base = [100.0] * 30
+    df = pd.DataFrame({'Open': base, 'High': [b + 5 for b in base],
+                       'Low': [b - 5 for b in base], 'Close': base}, index=idx)
+    lv = an.technical_levels(df, info)
+    check('levels current = 100', abs(lv['current'] - 100.0) < 1e-9)
+    names = {l['name'] for l in lv['levels']}
+    check('52-week high present', '52-week high' in names)
+    check('levels sorted high to low',
+          all(lv['levels'][i]['value'] >= lv['levels'][i+1]['value']
+              for i in range(len(lv['levels']) - 1)))
+    hi = next(l for l in lv['levels'] if l['name'] == '52-week high')
+    check('52w high is above current (resistance)', hi['value'] > lv['current'] and hi['pct'] > 0)
+
+
 def main_run():
     QApplication(sys.argv)   # needed so QObject/QThread can be constructed
     print('=' * 60)
@@ -641,6 +678,7 @@ def main_run():
     test_13f()
     test_ledger()
     test_ipo()
+    test_analysis()
     test_quotes()
     test_search()
 

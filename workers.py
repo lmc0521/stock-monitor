@@ -12,6 +12,23 @@ import sentiment
 import history
 import thirteenf
 import ipo
+import analysis
+
+
+class AnalysisWorker(QThread):
+    """Fetches analyst targets + technical levels for one symbol."""
+    ready = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, symbol: str):
+        super().__init__()
+        self.symbol = symbol
+
+    def run(self):
+        try:
+            self.ready.emit(analysis.fetch_analysis(self.symbol))
+        except Exception as exc:
+            self.error.emit(str(exc))
 
 
 class IPOWorker(QThread):

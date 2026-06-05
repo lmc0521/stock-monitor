@@ -29,7 +29,7 @@ from workers import (DataFetcher, QuoteFetcher, SearchWorker, PriceFetcher,
 from widgets import StockRow, ChartPanel
 from dialogs import (AddHoldingDialog, AlertsDialog, PortfolioPage, InsightsPage,
                      SentimentPage, LedgerPage, HistoryPage, ThirteenFPage, StrategyPage,
-                     IPOPage)
+                     IPOPage, StockAnalysisPage)
 
 
 class MainWindow(QMainWindow):
@@ -149,6 +149,7 @@ class MainWindow(QMainWindow):
         # navigation — these switch the embedded page on the right
         nav = [
             ('📈 Chart',             'chart'),
+            ('🎯 Stock Analysis',    'analysis'),
             ('📊 Portfolio / P&L',   'portfolio'),
             ('🧾 Transactions',      'ledger'),
             ('🕒 Portfolio History', 'history'),
@@ -193,6 +194,7 @@ class MainWindow(QMainWindow):
         # the embedded feature pages (formerly pop-up dialogs)
         self._pages = {
             'chart':     chart_page,
+            'analysis':  StockAnalysisPage(main=self),
             'portfolio': PortfolioPage(),
             'ledger':    LedgerPage(),
             'history':   HistoryPage(),
@@ -202,7 +204,7 @@ class MainWindow(QMainWindow):
             'strategy':  StrategyPage(),
             'ipo':       IPOPage(),
         }
-        for key in ('chart', 'portfolio', 'ledger', 'history',
+        for key in ('chart', 'analysis', 'portfolio', 'ledger', 'history',
                     'insights', 'sentiment', 'f13', 'strategy', 'ipo'):
             self._stack.addWidget(self._pages[key])
         return self._stack

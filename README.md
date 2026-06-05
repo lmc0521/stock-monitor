@@ -15,6 +15,9 @@ inspector, portfolio P&L tracking, and Claude-powered, portfolio-aware analysis.
   2Y / 5Y), volume sub-panel, and **5 / 10 / 20 EMA** overlays.
 - **Crosshair inspector** — press-and-hold on the chart to see the date and OHLC +
   the price under your cursor.
+- **Stock Analysis** — analyst consensus price target (mean/high/low, # analysts,
+  upside) + computed technical reference levels (support/resistance, MAs,
+  Bollinger) for the selected stock. Reference only, not advice.
 - **Portfolio / P&L** — import holdings + cash from CSV or add them via a form;
   see per-position and total unrealized P&L. Persisted to `portfolio.json`.
 - **Transactions / Ledger** — record buys, sells, and dividends. Open positions
@@ -130,6 +133,7 @@ See `sample_portfolio.csv` for a ready-made example.
 | `history.py` | Portfolio value reconstruction + daily snapshots |
 | `thirteenf.py` | SEC EDGAR 13F holdings fetch + parse |
 | `ipo.py` | Nasdaq IPO calendar fetch + parse |
+| `analysis.py` | Analyst targets + technical reference levels |
 | `llm.py` | Claude prompt builders + streaming analysis (with web search) |
 | `test_functions.py` | Headless unit tests (persistence, EMA, P&L, prompts, cache) |
 | `smoke_test.py` | Launches the GUI, loads a chart, screenshots it |
