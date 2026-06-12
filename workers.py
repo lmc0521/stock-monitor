@@ -13,6 +13,23 @@ import history
 import thirteenf
 import ipo
 import analysis
+import news
+
+
+class NewsWorker(QThread):
+    """Fetches recent headlines for one symbol off the UI thread."""
+    ready = pyqtSignal(str, list)
+    error = pyqtSignal(str)
+
+    def __init__(self, symbol: str):
+        super().__init__()
+        self.symbol = symbol
+
+    def run(self):
+        try:
+            self.ready.emit(self.symbol, news.fetch_news(self.symbol))
+        except Exception as exc:
+            self.error.emit(str(exc))
 
 
 class AnalysisWorker(QThread):

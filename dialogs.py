@@ -26,7 +26,7 @@ from appstate import (compute_portfolio, load_portfolio, save_portfolio,
                       parse_portfolio_csv, save_alerts)
 from workers import (PriceFetcher, SearchWorker, InsightsWorker, SentimentWorker,
                      HistoryWorker, ThirteenFWorker, StrategyWorker, IPOWorker,
-                     RumoredIPOWorker, AnalysisWorker)
+                     RumoredIPOWorker, AnalysisWorker, NewsWorker)
 
 class AddHoldingDialog(QDialog):
     """Add a single holding, with company-name autocomplete and symbol validation."""
@@ -1555,6 +1555,109 @@ class StockAnalysisPage(QWidget):
                     item.setForeground(QColor(color))
                 self._table.setItem(r, c, item)
         self._status.setText(f"Loaded {d['symbol']} — {len(levels)} reference levels.")
+
+
+# ── news page ─────────────────────────────────────────────────────────────────
+
+class NewsPage(QWidget):
+    """Recent headlines for the selected (or any typed) stock."""
+    def __init__(self, parent=None, main=None):
+        super().__init__(parent)
+        self._main = main
+        self._job = None
+        self._loaded_symbol = None
+        self._build_ui()
+
+    def on_show(self):
+        sym = (self._main._selected if self._main else None)
+        if sym and sym != self._loaded_symbol:
+            self._sym.setText(sym)
+            self._load()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        top = QHBoxLayout()
+        self._sym = QLineEdit()
+        self._sym.setPlaceholderText('Symbol (e.g. AAPL)')
+        self._sym.setFixedWidth(140)
+        self._sym.returnPressed.connect(self._load)
+        load = QPushButton('Load')
+        load.setObjectName('AccentBtn')
+        load.clicked.connect(self._load)
+        top.addWidget(QLabel('News for:'))
+        top.addWidget(self._sym)
+        top.addWidget(load)
+        top.addStretch()
+        layout.addLayout(top)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        self._body = QVBoxLayout(inner)
+        self._body.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._body.setSpacing(10)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
+
+        self._status = QLabel('Pick a stock in the watchlist or type a symbol.')
+        self._status.setStyleSheet(f'color: {SUBTEXT}; font-size: 11px;')
+        layout.addWidget(self._status)
+
+    def _clear(self):
+        while self._body.count():
+            item = self._body.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    def _load(self):
+        sym = self._sym.text().strip().upper()
+        if not sym:
+            return
+        if self._job and self._job.isRunning():
+            return
+        self._status.setText(f'Fetching news for {sym} …')
+        self._job = NewsWorker(sym)
+        self._job.ready.connect(self._on_ready)
+        self._job.error.connect(lambda m: self._status.setText('Error: ' + m))
+        self._job.start()
+
+    def _on_ready(self, symbol: str, items: list):
+        self._loaded_symbol = symbol
+        self._clear()
+        if not items:
+            self._status.setText(f'No recent news found for {symbol}.')
+            return
+        for n in items:
+            card = QFrame()
+            card.setObjectName('LeftPanel')          # reuse the panel card style
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(12, 8, 12, 8)
+            cl.setSpacing(3)
+
+            title = QLabel(f"<a href='{n['url']}' style='color:#85B7EB; "
+                           f"text-decoration:none;'>{n['title']}</a>"
+                           if n['url'] else n['title'])
+            title.setTextFormat(Qt.TextFormat.RichText)
+            title.setOpenExternalLinks(True)
+            title.setWordWrap(True)
+            title.setFont(QFont('Segoe UI', 11, QFont.Weight.Bold))
+            cl.addWidget(title)
+
+            meta = QLabel(' · '.join(x for x in (n['publisher'], n['date']) if x))
+            meta.setStyleSheet(f'color: {SUBTEXT}; font-size: 10px;')
+            cl.addWidget(meta)
+
+            if n['summary']:
+                summ = QLabel(n['summary'][:220] + ('…' if len(n['summary']) > 220 else ''))
+                summ.setWordWrap(True)
+                summ.setStyleSheet(f'color: {TEXT}; font-size: 11px;')
+                cl.addWidget(summ)
+
+            self._body.addWidget(card)
+        self._status.setText(f'{len(items)} headlines for {symbol} — click a title '
+                             'to open it in your browser.')
 
 
 # ── main window ──────────────────────────────────────────────────────────────

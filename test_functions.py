@@ -781,6 +781,36 @@ def test_currency():
         os.remove(path)
 
 
+# ── 19. news parsing (offline) ───────────────────────────────────────────────
+def test_news():
+    print('\n[19] News parsing (offline)')
+    import news as nm
+
+    new_fmt = [{'id': 'x', 'content': {
+        'title': 'Apple hits record',
+        'pubDate': '2026-06-11T19:52:25Z',
+        'provider': {'displayName': 'Reuters'},
+        'canonicalUrl': {'url': 'https://example.com/a'},
+        'summary': 'Apple stock reached a new high.'}}]
+    rows = nm.parse_news(new_fmt)
+    check('new format parsed', len(rows) == 1)
+    r = rows[0]
+    check('title/publisher/url extracted',
+          r['title'] == 'Apple hits record' and r['publisher'] == 'Reuters'
+          and r['url'] == 'https://example.com/a')
+    check('date trimmed to YYYY-MM-DD', r['date'] == '2026-06-11')
+
+    old_fmt = [{'title': 'Old style item', 'publisher': 'CNBC',
+                'link': 'https://example.com/b'}]
+    rows2 = nm.parse_news(old_fmt)
+    check('old flat format parsed', len(rows2) == 1 and rows2[0]['publisher'] == 'CNBC'
+          and rows2[0]['url'] == 'https://example.com/b')
+
+    check('titleless/malformed items skipped',
+          nm.parse_news([{'content': {}}, {}, None and {} or {'id': 'y'}]) == [])
+    check('empty/None input safe', nm.parse_news(None) == [] and nm.parse_news([]) == [])
+
+
 def main_run():
     QApplication(sys.argv)   # needed so QObject/QThread can be constructed
     print('=' * 60)
@@ -803,6 +833,7 @@ def main_run():
     test_analysis()
     test_reliability()
     test_currency()
+    test_news()
     test_quotes()
     test_search()
 
