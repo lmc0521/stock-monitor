@@ -411,7 +411,7 @@ class MainWindow(QMainWindow):
         row = self._rows.get(sym)
         if row:
             row.set_quote(price, pct)
-        self._check_alerts(sym, price)
+        self._check_alerts(sym, price, pct)
 
     # ── price alerts ──
     def _open_alerts(self):
@@ -419,14 +419,17 @@ class MainWindow(QMainWindow):
                      on_change=self._sync_alarms).exec()
         self._sync_alarms()
 
-    def _check_alerts(self, sym: str, price: float):
-        fired = evaluate_alerts(self._alerts, sym, price)
+    def _check_alerts(self, sym: str, price: float, pct: float | None = None):
+        fired = evaluate_alerts(self._alerts, sym, price, pct)
         if not fired:
             return
         save_alerts(self._alerts)
         QApplication.beep()
-        lines = [f"{a['symbol']} went {a['condition']} {a['price']:.2f}  (now {price:.2f})"
-                 for a in fired]
+        lines = [
+            (f"{a['symbol']} moved {pct:+.2f}% today (threshold ±{a['price']:g}%)"
+             if a.get('condition') == 'move' else
+             f"{a['symbol']} went {a['condition']} {a['price']:.2f}  (now {price:.2f})")
+            for a in fired]
         for a in fired:
             row = self._rows.get(a['symbol'])
             if row:

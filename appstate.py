@@ -136,20 +136,31 @@ def save_alerts(alerts: list):
         json.dump(alerts, f, indent=2)
 
 
-def evaluate_alerts(alerts: list, symbol: str, price: float) -> list:
+def evaluate_alerts(alerts: list, symbol: str, price: float,
+                    pct: float | None = None) -> list:
     """
-    Check a fresh price against the alerts for `symbol`. Returns the list of alerts
-    that newly fired this call, and marks them 'triggered' so they don't re-fire
-    until re-armed. Pure logic — no I/O.
+    Check a fresh quote against the alerts for `symbol`. Returns the list of
+    alerts that newly fired this call, and marks them 'triggered' so they don't
+    re-fire until re-armed. Pure logic — no I/O.
 
-    Each alert: {'symbol', 'condition': 'above'|'below', 'price', 'enabled', 'triggered'}
+    Alert kinds:
+      price level:  {'symbol', 'condition': 'above'|'below', 'price', ...}
+      daily move:   {'symbol', 'condition': 'move', 'price': <threshold %>, ...}
+                    fires when today's |% change| >= threshold (pct param).
     """
     fired = []
     for a in alerts:
         if a.get('symbol') != symbol or not a.get('enabled', True) or a.get('triggered'):
             continue
         cond, thr = a.get('condition'), a.get('price')
-        if (cond == 'above' and price >= thr) or (cond == 'below' and price <= thr):
+        hit = False
+        if cond == 'above':
+            hit = price >= thr
+        elif cond == 'below':
+            hit = price <= thr
+        elif cond == 'move':
+            hit = pct is not None and abs(pct) >= float(thr)
+        if hit:
             a['triggered'] = True
             fired.append(a)
     return fired

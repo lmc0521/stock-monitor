@@ -340,6 +340,20 @@ def test_alerts():
     # wrong symbol ignored
     check('other symbols ignored', main.evaluate_alerts(alerts, 'ZZZ', 1e9) == [])
 
+    # % daily-move alerts
+    move_alerts = [
+        {'symbol': 'MMM', 'condition': 'move', 'price': 5.0, 'enabled': True, 'triggered': False},
+    ]
+    check('small move does not fire', main.evaluate_alerts(move_alerts, 'MMM', 100.0, pct=2.3) == [])
+    f_up = main.evaluate_alerts(move_alerts, 'MMM', 100.0, pct=6.1)
+    check('move up past threshold fires', len(f_up) == 1)
+    move_alerts[0]['triggered'] = False
+    f_dn = main.evaluate_alerts(move_alerts, 'MMM', 100.0, pct=-7.5)
+    check('move down past threshold fires too', len(f_dn) == 1)
+    move_alerts[0]['triggered'] = False
+    check('move alert needs pct (None is safe)',
+          main.evaluate_alerts(move_alerts, 'MMM', 100.0, pct=None) == [])
+
 
 # ── 10. technical indicators (offline) ───────────────────────────────────────
 def test_indicators():

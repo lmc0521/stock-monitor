@@ -558,7 +558,9 @@ class AlertsDialog(QDialog):
             comp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
             self._sym.setCompleter(comp)
         self._cond = QComboBox()
-        self._cond.addItems(['above', 'below'])
+        self._cond.addItems(['above', 'below', 'moves ±%'])
+        self._cond.currentIndexChanged.connect(
+            lambda i: self._price.setPlaceholderText('Percent' if i == 2 else 'Price'))
         self._price = QLineEdit()
         self._price.setPlaceholderText('Price')
         add = QPushButton('+ Add')
@@ -599,10 +601,11 @@ class AlertsDialog(QDialog):
         self._table.setRowCount(len(self._alerts))
         for r, a in enumerate(self._alerts):
             triggered = a.get('triggered')
+            is_move = a.get('condition') == 'move'
             cells = [
                 a.get('symbol', ''),
-                a.get('condition', ''),
-                f"{a.get('price', 0):,.2f}",
+                'moves ±%' if is_move else a.get('condition', ''),
+                f"±{a.get('price', 0):g}%" if is_move else f"{a.get('price', 0):,.2f}",
                 'TRIGGERED' if triggered else 'armed',
             ]
             for c, text in enumerate(cells):
@@ -625,10 +628,14 @@ class AlertsDialog(QDialog):
         try:
             price = float(self._price.text())
         except ValueError:
-            QMessageBox.warning(self, 'Invalid', 'Price must be a number.')
+            QMessageBox.warning(self, 'Invalid', 'Price / percent must be a number.')
+            return
+        cond = 'move' if self._cond.currentIndex() == 2 else self._cond.currentText()
+        if cond == 'move' and price <= 0:
+            QMessageBox.warning(self, 'Invalid', 'Percent threshold must be positive.')
             return
         self._alerts.append({
-            'symbol': sym, 'condition': self._cond.currentText(),
+            'symbol': sym, 'condition': cond,
             'price': price, 'enabled': True, 'triggered': False,
         })
         self._sym.clear()
