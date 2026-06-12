@@ -1,6 +1,8 @@
-PyQt6>=6.5.0
-yfinance>=0.2.36
-mplfinance>=0.12.10b0
-matplotlib>=3.8.0
-pandas>=2.0.0
-anthropic>=0.40.0
+# Pinned to the exact versions the app is tested against, so a dependency
+# update can't silently break it. Bump deliberately, then run the tests.
+PyQt6==6.11.0
+yfinance==1.4.1
+mplfinance==0.12.10b0
+matplotlib==3.10.9
+pandas==3.0.3
+anthropic==0.105.2

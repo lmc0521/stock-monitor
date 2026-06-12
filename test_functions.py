@@ -834,8 +834,11 @@ def main_run():
     test_reliability()
     test_currency()
     test_news()
-    test_quotes()
-    test_search()
+    if os.environ.get('SKIP_NETWORK'):
+        print('\n[skipped] network tests (SKIP_NETWORK set — e.g. on CI)')
+    else:
+        test_quotes()
+        test_search()
 
     print('\n' + '=' * 60)
     print(f'RESULTS:  {PASS} passed, {FAIL} failed')
