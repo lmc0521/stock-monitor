@@ -12,6 +12,7 @@ alerts.json
 history.json
 transactions.json
 cache.pkl
+currencies.json
 
 # Test / smoke-test artifacts
 smoke_test.png

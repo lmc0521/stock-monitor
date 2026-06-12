@@ -191,6 +191,32 @@ def fetch_closes(symbols: list, start: str) -> dict:
     return out
 
 
+def _apply_fx(closes: dict, symbols: list):
+    """Convert close series to USD using current FX rates (approximation: the
+    current rate is applied across all history). Returns {symbol: rate}."""
+    import currency
+    rates = {}
+    for sym in symbols:
+        cur = currency.get_currency(sym)
+        rate = currency.fx_to_usd(cur)
+        rates[sym] = rate
+        if sym in closes and rate != 1.0:
+            closes[sym] = closes[sym] * rate
+    return rates
+
+
+def _scale_costs(items: list, rates: dict, price_key: str) -> list:
+    """Return copies of holdings/transactions with native costs converted to USD."""
+    out = []
+    for it in items:
+        rate = rates.get(it.get('symbol'), 1.0)
+        it2 = dict(it)
+        if rate != 1.0 and price_key in it2:
+            it2[price_key] = float(it2[price_key]) * rate
+        out.append(it2)
+    return out
+
+
 def build_history(holdings: list, cash: float):
     """
     Return (total_value_series, invested_series) for the portfolio, merging the
@@ -198,6 +224,7 @@ def build_history(holdings: list, cash: float):
 
     If a transaction ledger exists, reconstruct accurately from actual buys/sells
     over time; otherwise fall back to current holdings + purchase dates.
+    Non-USD holdings are converted with current FX rates (approximation).
     """
     import ledger
     txns = ledger.load_transactions()
@@ -207,6 +234,8 @@ def build_history(holdings: list, cash: float):
         start = min(t['date'] for t in trades if t.get('date'))
         symbols = sorted({t['symbol'] for t in trades})
         closes = fetch_closes(symbols, start)
+        rates = _apply_fx(closes, symbols)
+        txns = _scale_costs(txns, rates, 'price')
         total = reconstruct_from_ledger(txns, closes, cash)
         if total is None or len(total) == 0:
             return pd.Series(dtype=float), pd.Series(dtype=float)
@@ -224,7 +253,10 @@ def build_history(holdings: list, cash: float):
         return pd.Series(dtype=float), pd.Series(dtype=float)
 
     start = earliest_start(holdings)
-    closes = fetch_closes([h['symbol'] for h in holdings], start)
+    symbols = [h['symbol'] for h in holdings]
+    closes = fetch_closes(symbols, start)
+    rates = _apply_fx(closes, symbols)
+    holdings = _scale_costs(holdings, rates, 'avg_cost')
     total = reconstruct_series(holdings, closes, cash)
 
     # overlay exact recorded snapshots

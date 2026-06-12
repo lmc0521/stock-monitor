@@ -158,6 +158,7 @@ class PortfolioPage(QWidget):
         super().__init__(parent)
         self._holdings, self._cash = [], 0.0
         self._prices = {}
+        self._fx = {}
         self._fetcher = None
         self._build_ui()
 
@@ -285,15 +286,19 @@ class PortfolioPage(QWidget):
         if self._fetcher and self._fetcher.isRunning():
             return
         self._status.setText('Fetching latest prices …')
-        self._fetcher = PriceFetcher(symbols)
-        self._fetcher.prices_ready.connect(self._on_prices)
+        self._fetcher = PriceFetcher(symbols, with_fx=True)
+        self._fetcher.quotes_ready.connect(self._on_quotes)
         self._fetcher.start()
 
-    def _on_prices(self, prices: dict):
+    def _on_quotes(self, prices: dict, fx: dict):
         self._prices = prices
+        self._fx = fx
         missing = [h['symbol'] for h in self._holdings if h['symbol'] not in prices]
-        self._status.setText('Prices updated.' if not missing
-                              else f'Prices updated. No data for: {", ".join(missing)}')
+        non_usd = sorted({c for c, _r in fx.values() if c != 'USD'})
+        note = f' Converted to USD from: {", ".join(non_usd)}.' if non_usd else ''
+        self._status.setText(('Prices updated.' if not missing
+                              else f'Prices updated. No data for: {", ".join(missing)}.')
+                             + note)
         self._render()
 
     # ── rendering ──
@@ -307,12 +312,15 @@ class PortfolioPage(QWidget):
         self._table.setItem(row, col, item)
 
     def _render(self):
-        result = compute_portfolio(self._holdings, self._prices, self._cash)
+        result = compute_portfolio(self._holdings, self._prices, self._cash,
+                                   fx=self._fx)
         rows = result['rows']
         self._table.setRowCount(len(rows))
 
         for r, row in enumerate(rows):
-            self._cell(r, 0, row['symbol'], left=True)
+            cur = row.get('currency', 'USD')
+            sym_label = row['symbol'] if cur == 'USD' else f"{row['symbol']}  ({cur})"
+            self._cell(r, 0, sym_label, left=True)
             self._cell(r, 1, f"{row['shares']:g}")
             self._cell(r, 2, f"{row['avg_cost']:,.2f}")
             self._cell(r, 5, f"{row['cost']:,.2f}")

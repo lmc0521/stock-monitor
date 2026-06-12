@@ -713,6 +713,60 @@ def test_reliability():
     check('health recovers', dm.get_health()['TestSource']['ok'] is True)
 
 
+# ── 18. currency normalization (offline) ─────────────────────────────────────
+def test_currency():
+    print('\n[18] Currency normalization (offline)')
+    import currency as cur
+
+    # isolate the persisted symbol->currency map
+    fd, path = tempfile.mkstemp(suffix='.json'); os.close(fd)
+    orig_file, orig_map, orig_loaded = cur.CURRENCY_FILE, dict(cur._map), cur._loaded[0]
+    cur.CURRENCY_FILE = path
+    cur._map.clear()
+    cur._loaded[0] = True
+    try:
+        calls = {'n': 0}
+        def fake_detector(sym):
+            calls['n'] += 1
+            return 'JPY' if sym.endswith('.T') else 'USD'
+        check('detects JPY for .T symbol', cur.get_currency('7203.T', detector=fake_detector) == 'JPY')
+        cur.get_currency('7203.T', detector=fake_detector)
+        check('currency cached (detector called once)', calls['n'] == 1, detail=str(calls['n']))
+
+        rates = {'JPYUSD=X': 0.00624}
+        check('fx_to_usd USD == 1', cur.fx_to_usd('USD') == 1.0)
+        check('fx_to_usd JPY uses rate', abs(cur.fx_to_usd('JPY', rate_fetcher=rates.get) - 0.00624) < 1e-9)
+        check('fx_to_usd falls back to 1 on failure',
+              cur.fx_to_usd('XXX', rate_fetcher=lambda p: (_ for _ in ()).throw(RuntimeError())) == 1.0)
+
+        # compute_portfolio with fx: JPY position converts; totals sum in USD
+        holdings = [
+            {'symbol': 'AAPL',   'shares': 10, 'avg_cost': 100.0},    # USD: cost 1000
+            {'symbol': '7203.T', 'shares': 100, 'avg_cost': 2000.0},  # JPY: cost 200000 JPY
+        ]
+        prices = {'AAPL': 110.0, '7203.T': 2844.0}
+        fx = {'AAPL': ('USD', 1.0), '7203.T': ('JPY', 0.00624)}
+        res = main.compute_portfolio(holdings, prices, cash=0.0, fx=fx)
+        jpy_row = next(r for r in res['rows'] if r['symbol'] == '7203.T')
+        check('JPY market value converted to USD',
+              abs(jpy_row['mkt'] - 100 * 2844.0 * 0.00624) < 1e-6, detail=f"{jpy_row['mkt']:.2f}")
+        check('JPY cost converted to USD',
+              abs(jpy_row['cost'] - 100 * 2000.0 * 0.00624) < 1e-6, detail=f"{jpy_row['cost']:.2f}")
+        check('row carries its currency', jpy_row['currency'] == 'JPY')
+        expected_total = 10 * 110.0 + 100 * 2844.0 * 0.00624
+        check('total sums correctly across currencies',
+              abs(res['market_value'] - expected_total) < 1e-6, detail=f"{res['market_value']:.2f}")
+        # without fx the old (wrong) raw sum still works as before
+        res0 = main.compute_portfolio(holdings, prices, cash=0.0)
+        check('no-fx path unchanged (backward compatible)',
+              abs(res0['market_value'] - (1100.0 + 284400.0)) < 1e-6)
+    finally:
+        cur.CURRENCY_FILE = orig_file
+        cur._map.clear(); cur._map.update(orig_map)
+        cur._loaded[0] = orig_loaded
+        os.remove(path)
+
+
 def main_run():
     QApplication(sys.argv)   # needed so QObject/QThread can be constructed
     print('=' * 60)
@@ -734,6 +788,7 @@ def main_run():
     test_ipo()
     test_analysis()
     test_reliability()
+    test_currency()
     test_quotes()
     test_search()
 

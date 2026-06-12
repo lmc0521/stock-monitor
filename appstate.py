@@ -51,34 +51,43 @@ def parse_portfolio_csv(path: str):
     return holdings, cash
 
 
-def compute_portfolio(holdings: list, prices: dict, cash: float = 0.0) -> dict:
+def compute_portfolio(holdings: list, prices: dict, cash: float = 0.0,
+                      fx: dict | None = None) -> dict:
     """
     Compute per-holding and total P&L.
     holdings: [{'symbol','shares','avg_cost'}]; prices: {symbol: current_price}.
     Holdings with no known price are listed but excluded from market totals.
+
+    fx (optional) maps symbol -> (currency, to-USD rate). Prices and avg costs
+    are assumed quoted in the holding's native currency; with fx given, every
+    monetary output (cost/mkt/pnl/totals) is converted to USD so currencies sum
+    correctly. Cash is always treated as USD.
     """
+    fx = fx or {}
     rows = []
     invested_cost = 0.0       # cost of all positions (incl. those missing a price)
     market_value  = 0.0       # market value of priced positions only
     priced_cost   = 0.0       # cost of priced positions only (for % return)
 
     for h in holdings:
+        cur, rate = fx.get(h['symbol'], ('USD', 1.0))
         shares, avg = float(h['shares']), float(h['avg_cost'])
-        cost  = shares * avg
+        cost  = shares * avg * rate
         price = prices.get(h['symbol'])
         invested_cost += cost
 
         if price is None:
             rows.append({**h, 'shares': shares, 'avg_cost': avg, 'cost': cost,
-                         'price': None, 'mkt': None, 'pnl': None, 'pnl_pct': None})
+                         'currency': cur, 'price': None, 'mkt': None,
+                         'pnl': None, 'pnl_pct': None})
             continue
 
-        mkt = shares * price
+        mkt = shares * price * rate
         pnl = mkt - cost
         market_value += mkt
         priced_cost  += cost
         rows.append({**h, 'shares': shares, 'avg_cost': avg, 'cost': cost,
-                     'price': price, 'mkt': mkt, 'pnl': pnl,
+                     'currency': cur, 'price': price, 'mkt': mkt, 'pnl': pnl,
                      'pnl_pct': (pnl / cost * 100.0) if cost else 0.0})
 
     total_pnl     = market_value - priced_cost

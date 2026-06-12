@@ -136,12 +136,18 @@ class SearchWorker(QThread):
 
 
 class PriceFetcher(QThread):
-    """Fetches the latest close price for a set of symbols (for the portfolio)."""
-    prices_ready = pyqtSignal(dict)   # {symbol: price}
+    """Fetches the latest close price for a set of symbols (for the portfolio).
 
-    def __init__(self, symbols: list):
+    With with_fx=True it also resolves each symbol's currency + to-USD rate and
+    emits quotes_ready(prices, fx) instead of just prices_ready.
+    """
+    prices_ready = pyqtSignal(dict)         # {symbol: price (native currency)}
+    quotes_ready = pyqtSignal(dict, dict)   # prices, {symbol: (currency, rate)}
+
+    def __init__(self, symbols: list, with_fx: bool = False):
         super().__init__()
         self.symbols = symbols
+        self.with_fx = with_fx
 
     def run(self):
         out = {}
@@ -153,6 +159,10 @@ class PriceFetcher(QThread):
             except Exception:
                 continue
         self.prices_ready.emit(out)
+        if self.with_fx:
+            import currency
+            fx = currency.fx_for_symbols(list(out))
+            self.quotes_ready.emit(out, fx)
 
 
 class SentimentWorker(QThread):
