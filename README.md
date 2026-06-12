@@ -97,10 +97,12 @@ pip install pyinstaller
 pyinstaller --noconfirm StockMonitor.spec
 ```
 
-Or double-click `build_exe.bat`. The result is `dist\StockMonitor.exe` (~90 MB,
-single file). Put your `.env` file **next to the .exe** for AI Insights; the app
-reads/writes `watchlist.json`, `portfolio.json`, and `alerts.json` in the same
-folder as the executable.
+Or double-click `build_exe.bat`. The result is a **folder build** at
+`dist\StockMonitor\` — run `dist\StockMonitor\StockMonitor.exe` (folder builds
+launch much faster than a single-file exe because nothing is unpacked per
+launch). Distribute the whole folder. Put your `.env` file **next to the .exe**
+(inside `dist\StockMonitor\`) for AI Insights; the app reads/writes its state
+files (`watchlist.json`, `portfolio.json`, `alerts.json`, …) in that same folder.
 
 ## Portfolio CSV format
 

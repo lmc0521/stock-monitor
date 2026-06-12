@@ -22,23 +22,33 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# Folder build (one-dir): launches near-instantly because nothing has to be
+# unpacked to a temp dir on every start. Distribute the dist/StockMonitor
+# folder; the app is dist/StockMonitor/StockMonitor.exe.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='StockMonitor',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,            # no console window — it's a GUI app
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='StockMonitor',
 )
