@@ -144,6 +144,9 @@ def vix_mood(vix: float | None) -> tuple[str, str]:
     return ('High Fear', '#c0392b')
 
 
+_HEALTH_NAMES = {'cnn': 'CNN Fear&Greed', 'crypto': 'Crypto F&G', 'buffett': 'World Bank'}
+
+
 def gather() -> dict:
     """Fetch everything, tolerating individual source failures."""
     out = {'cnn': None, 'crypto': None, 'vix': None, 'buffett': None, 'errors': []}
@@ -151,6 +154,10 @@ def gather() -> dict:
                     ('vix', fetch_vix), ('buffett', fetch_buffett)):
         try:
             out[key] = fn()
+            if key in _HEALTH_NAMES:
+                data.report_health(_HEALTH_NAMES[key], True)
         except Exception as exc:                      # noqa: BLE001
             out['errors'].append(f'{key}: {exc}')
+            if key in _HEALTH_NAMES:
+                data.report_health(_HEALTH_NAMES[key], False, str(exc))
     return out

@@ -659,6 +659,60 @@ def test_analysis():
     check('52w high is above current (resistance)', hi['value'] > lv['current'] and hi['pct'] > 0)
 
 
+# ── 17. data reliability: persistence, throttle, health (offline) ────────────
+def test_reliability():
+    print('\n[17] Data reliability (offline)')
+    import data as dm
+
+    # persistent cache round-trip: populate -> save -> wipe memory -> load
+    dm.clear_cache()
+    fake_df = pd.DataFrame({'Close': [1.0, 2.0]})
+    clock = {'t': 1000.0}
+    dm.get_history('PERSIST', '1mo', '1d', ttl=999,
+                   fetcher=lambda s, p, i: fake_df, now=lambda: clock['t'])
+    fd, path = tempfile.mkstemp(suffix='.pkl'); os.close(fd)
+    try:
+        dm.save_cache(path, force=True)
+        with dm._LOCK:
+            dm._HISTORY_CACHE.clear()
+        ok = dm.load_cache(path)
+        check('disk cache loads after memory wipe', ok)
+        # source now fails -> must serve the disk-restored data
+        def failing(s, p, i):
+            raise RuntimeError('source down at startup')
+        clock['t'] += 10_000   # past TTL, forcing a refetch attempt
+        df = dm.get_history('PERSIST', '1mo', '1d', ttl=999,
+                            fetcher=failing, now=lambda: clock['t'])
+        check('restored cache served when source is down', df is not None and len(df) == 2)
+    finally:
+        os.remove(path)
+        dm.clear_cache()
+
+    # throttle: second call within MIN_GAP must sleep the remainder
+    slept = []
+    t = {'v': 100.0}
+    def fnow(): return t['v']
+    def fsleep(s): slept.append(s); t['v'] += s
+    dm._last_call[0] = 0.0
+    dm._throttle(now=fnow, sleep=fsleep)              # first: far past, no sleep
+    first_sleeps = len(slept)
+    dm._throttle(now=fnow, sleep=fsleep)              # immediate second: must wait
+    check('first call not throttled', first_sleeps == 0, detail=f'slept={slept}')
+    check('burst second call throttled ~MIN_GAP',
+          len(slept) == first_sleeps + 1 and abs(slept[-1] - dm.MIN_GAP) < 0.05,
+          detail=f'slept={slept}')
+    dm._last_call[0] = 0.0
+
+    # health registry transitions
+    dm.report_health('TestSource', True)
+    check('health OK recorded', dm.get_health()['TestSource']['ok'] is True)
+    dm.report_health('TestSource', False, 'boom')
+    h = dm.get_health()['TestSource']
+    check('health failure recorded with error', h['ok'] is False and 'boom' in h['error'])
+    dm.report_health('TestSource', True)
+    check('health recovers', dm.get_health()['TestSource']['ok'] is True)
+
+
 def main_run():
     QApplication(sys.argv)   # needed so QObject/QThread can be constructed
     print('=' * 60)
@@ -679,6 +733,7 @@ def main_run():
     test_ledger()
     test_ipo()
     test_analysis()
+    test_reliability()
     test_quotes()
     test_search()
 

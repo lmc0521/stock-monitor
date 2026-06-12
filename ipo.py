@@ -59,4 +59,11 @@ def parse_calendar(payload: dict) -> dict:
 
 def fetch_calendar(month: str) -> dict:
     """Fetch the IPO calendar for a given month ('YYYY-MM')."""
-    return parse_calendar(_get_json(BASE_URL + month))
+    import data as _data
+    try:
+        out = parse_calendar(_get_json(BASE_URL + month))
+        _data.report_health('Nasdaq IPO', True)
+        return out
+    except Exception as exc:
+        _data.report_health('Nasdaq IPO', False, str(exc))
+        raise

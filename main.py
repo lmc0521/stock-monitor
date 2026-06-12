@@ -120,11 +120,43 @@ class MainWindow(QMainWindow):
             self._nav_btns[key] = btn
 
         h.addStretch()
+
+        # data-health indicator: green when all sources OK, red names when not
+        self._health_lbl = QLabel('● data')
+        self._health_lbl.setStyleSheet(f'color: {SUBTEXT}; font-size: 11px; padding: 0 6px;')
+        h.addWidget(self._health_lbl)
+        self._health_timer = QTimer(self)
+        self._health_timer.setInterval(10_000)
+        self._health_timer.timeout.connect(self._update_health)
+        self._health_timer.start()
+
         alert_btn = QPushButton('🔔 Alerts')
         alert_btn.setObjectName('AccentBtn')
         alert_btn.clicked.connect(self._open_alerts)
         h.addWidget(alert_btn)
         return bar
+
+    def _update_health(self):
+        health = data.get_health()
+        if not health:
+            return
+        bad = [k for k, v in health.items() if not v.get('ok')]
+        if bad:
+            self._health_lbl.setText('● ' + ', '.join(bad) + ' down')
+            self._health_lbl.setStyleSheet(
+                f'color: {DOWN_COLOR}; font-size: 11px; padding: 0 6px;')
+        else:
+            self._health_lbl.setText('● data OK')
+            self._health_lbl.setStyleSheet(
+                f'color: {UP_COLOR}; font-size: 11px; padding: 0 6px;')
+        tip = '\n'.join(
+            f"{k}: {'OK' if v.get('ok') else 'FAILED — ' + v.get('error', '')}"
+            for k, v in sorted(health.items()))
+        self._health_lbl.setToolTip(tip)
+
+    def closeEvent(self, event):
+        data.save_cache(force=True)        # persist the data cache across restarts
+        super().closeEvent(event)
 
     def _build_left_panel(self) -> QWidget:
         panel = QFrame()

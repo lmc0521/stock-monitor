@@ -108,6 +108,17 @@ def find_latest_13f(submissions: dict):
 
 def get_holdings(cik: str) -> dict:
     """Fetch and aggregate the latest 13F holdings for a manager by CIK."""
+    import data as _data
+    try:
+        out = _get_holdings(cik)
+        _data.report_health('SEC EDGAR', True)
+        return out
+    except Exception as exc:
+        _data.report_health('SEC EDGAR', False, str(exc))
+        raise
+
+
+def _get_holdings(cik: str) -> dict:
     cik = _normalize_cik(cik)
     submissions = json.loads(_get(f'https://data.sec.gov/submissions/CIK{int(cik):010d}.json'))
     fund_name = submissions.get('name', cik)

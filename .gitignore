@@ -11,6 +11,7 @@ portfolio.json
 alerts.json
 history.json
 transactions.json
+cache.pkl
 
 # Test / smoke-test artifacts
 smoke_test.png
