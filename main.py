@@ -25,7 +25,7 @@ from appstate import (_app_dir, _APP_DIR, WATCHLIST_FILE, PORTFOLIO_FILE, ALERTS
                       save_portfolio, load_alerts, save_alerts, evaluate_alerts)
 from workers import (DataFetcher, QuoteFetcher, SearchWorker, PriceFetcher,
                      SentimentWorker, HistoryWorker, ThirteenFWorker, InsightsWorker,
-                     StrategyWorker)
+                     StrategyWorker, SnapshotWorker)
 from widgets import StockRow, ChartPanel
 from dialogs import (AddHoldingDialog, AlertsDialog, PortfolioPage, InsightsPage,
                      SentimentPage, LedgerPage, HistoryPage, ThirteenFPage, StrategyPage,
@@ -61,6 +61,20 @@ class MainWindow(QMainWindow):
         self._auto_timer.setInterval(60_000)
         self._auto_timer.timeout.connect(self._refresh_quotes)
         self._auto_timer.start()
+
+        # record today's portfolio snapshot shortly after launch (background),
+        # so the value history stays complete without opening the Portfolio page
+        self._snapshot_job = None
+        QTimer.singleShot(5_000, self._startup_snapshot)
+
+    def _startup_snapshot(self):
+        if self._snapshot_job and self._snapshot_job.isRunning():
+            return
+        self._snapshot_job = SnapshotWorker()
+        self._snapshot_job.done.connect(
+            lambda v: self._status.setText(
+                self._status.text() + f'   |   📸 snapshot recorded ({v:,.0f})'))
+        self._snapshot_job.start()
 
     # ── persistence ──
     def _load_watchlist(self) -> list:

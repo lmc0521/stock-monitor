@@ -165,6 +165,38 @@ class PriceFetcher(QThread):
             self.quotes_ready.emit(out, fx)
 
 
+class SnapshotWorker(QThread):
+    """Records today's portfolio-value snapshot in the background at startup,
+    so history stays complete even if the Portfolio page is never opened."""
+    done = pyqtSignal(float)        # today's total value (USD)
+
+    def run(self):
+        try:
+            import currency
+            from appstate import load_portfolio, compute_portfolio
+            holdings, cash = load_portfolio()
+            if not holdings:
+                return
+            prices = {}
+            for h in holdings:
+                try:
+                    closes = data.get_last_closes(h['symbol'], days=5)
+                    if len(closes):
+                        prices[h['symbol']] = float(closes.iloc[-1])
+                except Exception:
+                    continue
+            if not prices:
+                return
+            fx = currency.fx_for_symbols(list(prices))
+            result = compute_portfolio(holdings, prices, cash, fx=fx)
+            if result['market_value'] > 0:
+                history.record_snapshot(result['total_value'], result['market_value'],
+                                        result['cash'], result['invested_cost'])
+                self.done.emit(result['total_value'])
+        except Exception:
+            pass                     # a failed snapshot must never disturb startup
+
+
 class SentimentWorker(QThread):
     """Fetches investor-sentiment indices off the UI thread."""
     ready = pyqtSignal(dict)
